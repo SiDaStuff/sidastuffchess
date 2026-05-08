@@ -242,12 +242,15 @@ body:not(.menu-active) .main-menu {
   place-items: center;
   background: var(--bg-strong);
   color: var(--accent-contrast);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
   border: 0;
   border-radius: 8px;
+  overflow: hidden;
+}
+
+.brand-mark img {
+  width: 76%;
+  height: 76%;
+  object-fit: contain;
 }
 
 .brand-copy h1 {
@@ -2052,13 +2055,23 @@ body[data-mode="coach"] .analysis-overview {
 .modal-close {
   width: 36px;
   height: 36px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
   border: 1px solid var(--border-color);
   background: var(--bg-panel);
   color: var(--text-primary);
   cursor: pointer;
   font-size: 1.25rem;
   line-height: 1;
+  font-family: 'Material Symbols Outlined';
+  font-variation-settings: 'opsz' 24, 'wght' 500, 'FILL' 0, 'GRAD' 0;
   border-radius: 8px;
+}
+
+.modal-close:hover {
+  background: var(--bg-muted);
 }
 
 .modal-body {
@@ -2221,24 +2234,50 @@ body[data-mode="coach"] .analysis-overview {
 
 @media (max-width: 760px) {
   #app {
-    padding: 10px;
+    padding: 8px;
   }
 
   .header {
-    flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+  }
+
+  .brand {
+    min-width: 0;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    font-size: 0.86rem;
+  }
+
+  .brand-copy h1 {
+    font-size: 1rem;
+    white-space: nowrap;
+  }
+
+  .brand-kicker {
+    display: none;
   }
 
   .header-actions {
-    width: 100%;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    justify-content: stretch;
+    margin-left: auto;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
   }
 
   .header-actions .btn {
-    width: 100%;
-    padding: 10px 8px;
+    width: 38px;
+    min-height: 38px;
+    padding: 0;
+  }
+
+  .header-actions .btn-label {
+    display: none;
   }
 
   .main-content {
@@ -2304,14 +2343,15 @@ body[data-mode="coach"] .analysis-overview {
     grid-template-columns: 1fr;
   }
 
-  .board-controls {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    width: 100%;
-  }
+	  .board-controls {
+	    display: grid;
+	    grid-template-columns: repeat(4, minmax(0, 1fr));
+	    width: 100%;
+	    gap: 6px;
+	  }
 
-  .btn-control {
-    height: 42px;
+	  .btn-control {
+	    height: 40px;
     min-width: 0;
     width: 100%;
     padding: 0;
@@ -2334,7 +2374,16 @@ body[data-mode="coach"] .analysis-overview {
 
 	  .coach-controls .field,
 	  .coach-action {
-    width: 100%;
+	    width: 100%;
+	  }
+
+  .move-list {
+    max-height: 280px;
+  }
+
+  .modal {
+    max-height: calc(100vh - 24px);
+    overflow: auto;
   }
 
   .insight-top {
@@ -2350,7 +2399,80 @@ body[data-mode="coach"] .analysis-overview {
     grid-template-columns: 1fr;
   }
 
+	  .main-menu-brand {
+	    font-size: 1.6rem;
+	  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --board-size: min(420px, calc(100vw - 56px));
+  }
+
+  .main-content {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .eval-bar-container {
+    width: 34px;
+    padding: 6px 5px;
+  }
+
+  .eval-bar {
+    width: 20px;
+  }
+
+  .eval-score {
+    font-size: 0.72rem;
+  }
+
+  .player-info {
+    min-height: 36px;
+    padding: 7px 9px;
+    font-size: 0.82rem;
+  }
+
+  .move-row {
+    grid-template-columns: 28px 1fr 1fr;
+    gap: 4px;
+  }
+
+  .move-cell {
+    min-height: 34px;
+    padding: 6px;
+    gap: 5px;
+    font-size: 0.78rem;
+  }
+
+  .move-icon {
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    font-size: 0.6rem;
+  }
+
+  .move-eval {
+    display: none;
+  }
+
   .main-menu-brand {
-    font-size: 1.6rem;
+    font-size: 1.45rem;
+  }
+
+  .review-extra-panel,
+  .review-narrative p,
+  .engine-config,
+  .review-summary,
+  .engine-info,
+  .move-insights,
+  .coach-card,
+  .critical-moments,
+  .move-list-container,
+  .opening-info,
+  .live-eval,
+  .game-status {
+    padding: 10px;
   }
 }

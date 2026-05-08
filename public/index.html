@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SiDaStuff CHESS</title>
-  <link rel="icon" type="image/png" href="./assets/icon.png">
-  <link rel="apple-touch-icon" href="./assets/icon.png">
+	  <link rel="icon" type="image/png" href="./assets/logo.png">
+	  <link rel="apple-touch-icon" href="./assets/logo.png">
 	  <link rel="stylesheet" href="./css/example.css">
 	  <link rel="stylesheet" href="./css/style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -32,12 +32,13 @@
     <!-- Header -->
     <header class="header">
       <div class="brand">
-        <div class="brand-mark">SD</div>
-        <div class="brand-copy">
-          <p class="brand-kicker">Chess workspace</p>
-          <h1>SiDaStuff CHESS</h1>
-			  </div>
-      <div class="header-actions">
+	        <div class="brand-mark"><img src="./assets/logo.png" alt=""></div>
+	        <div class="brand-copy">
+	          <p class="brand-kicker">Chess workspace</p>
+	          <h1>SiDaStuff CHESS</h1>
+				  </div>
+	      </div>
+	      <div class="header-actions">
         <button id="btn-import" class="btn btn-primary">
           <span class="btn-content">
             <span class="material-symbols-outlined btn-symbol">upload_file</span>
@@ -196,6 +197,12 @@
 		                    <span class="btn-label">Explore Best Line</span>
 		                  </span>
 		                </button>
+		                <button id="btn-return-explorer" class="btn btn-secondary btn-small" hidden>
+		                  <span class="btn-content">
+		                    <span class="material-symbols-outlined btn-symbol">keyboard_return</span>
+		                    <span class="btn-label">Back to Review</span>
+		                  </span>
+		                </button>
 		              </div>
 		              <div class="insight-alternatives" id="insight-alternatives"></div>
 	            </div>
@@ -246,7 +253,7 @@
             <div class="coach-card-header">
               <div class="coach-identity">
                 <div class="coach-avatar" aria-hidden="true">
-                  <img src="./assets/icon.png" alt="">
+                  <img src="./assets/logo.png" alt="">
                 </div>
                 <div>
                   <h3>Coach</h3>
@@ -370,7 +377,7 @@
       <div class="modal modal-settings">
         <div class="modal-header">
           <h2>Engine Settings</h2>
-          <button class="modal-close material-symbols-outlined" id="settings-close" aria-label="Close">close</button>
+          <button type="button" class="modal-close material-symbols-outlined" id="settings-close" aria-label="Close">close</button>
         </div>
         <div class="modal-body">
 	          <div class="engine-form">
@@ -412,7 +419,7 @@
       <div class="modal">
         <div class="modal-header">
           <h2>Import Games</h2>
-          <button class="modal-close material-symbols-outlined" id="modal-close" aria-label="Close">close</button>
+          <button type="button" class="modal-close material-symbols-outlined" id="modal-close" aria-label="Close">close</button>
         </div>
         <div class="modal-body">
           <div class="import-source-grid">
@@ -459,7 +466,7 @@
 		      <div class="modal modal-engine-choice">
 		        <div class="modal-header">
 		          <h2>Choose Engine</h2>
-		          <button class="modal-close material-symbols-outlined" id="engine-choice-close" aria-label="Close">close</button>
+		          <button type="button" class="modal-close material-symbols-outlined" id="engine-choice-close" aria-label="Close">close</button>
 		        </div>
 		        <div class="modal-body">
 		          <div class="field">
@@ -498,7 +505,7 @@
 		      <div class="modal modal-coach-setup">
 	        <div class="modal-header">
 	          <h2>Play Coach</h2>
-	          <button class="modal-close material-symbols-outlined" id="coach-setup-close" aria-label="Close">close</button>
+	          <button type="button" class="modal-close material-symbols-outlined" id="coach-setup-close" aria-label="Close">close</button>
 	        </div>
 	        <div class="modal-body">
 	          <label class="field">

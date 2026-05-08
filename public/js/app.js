@@ -20,10 +20,11 @@ class ChessReviewApp {
     this.gameHeaders = {};
     this.originalGameMoves = [];
     this.initialFen = this.chess.fen();
-    this.currentMoveIndex = -1;
-    this.analysisResults = null;
-    this.liveMoveResults = [];
-    this.isAnalyzing = false;
+	    this.currentMoveIndex = -1;
+	    this.analysisResults = null;
+	    this.liveMoveResults = [];
+	    this.explorerReturnState = null;
+	    this.isAnalyzing = false;
     this.autoPlaying = false;
     this.liveEvalHistory = [];
     this.lastLiveEvalFen = '';
@@ -170,6 +171,7 @@ class ChessReviewApp {
 	    this.elInsightEndgame = document.getElementById('insight-endgame');
 	    this.elInsightCoach = document.getElementById('insight-coach');
 	    this.elBtnLineExplorer = document.getElementById('btn-line-explorer');
+	    this.elBtnReturnExplorer = document.getElementById('btn-return-explorer');
 	    this.elInsightAlternatives = document.getElementById('insight-alternatives');
 
     this.elCoachCard = document.getElementById('coach-card');
@@ -288,6 +290,7 @@ class ChessReviewApp {
 	    this.elBtnCoachSetupStart?.addEventListener('click', () => this._startCoachFromSetup());
 	    this.elBtnReview.addEventListener('click', () => this._startReview());
 	    this.elBtnLineExplorer?.addEventListener('click', () => this._exploreBestLineFromCurrentMove());
+	    this.elBtnReturnExplorer?.addEventListener('click', () => this._returnFromLineExplorer());
 	    this.elBtnReset.addEventListener('click', () => this._resetGame());
     this.elEngineSource.addEventListener('change', () => this._handleEngineSourceChange());
 	    this.elEngineModule.addEventListener('change', () => this._handleEngineModuleChange());
@@ -372,6 +375,7 @@ class ChessReviewApp {
 	    this.autoPlaying = false;
 	    this._setButtonLabel(this.elBtnAuto, 'Auto');
 	    this.liveEvalToken += 1;
+	    this.explorerReturnState = null;
 	    this.coachMode.active = false;
 	    this.coachMode.thinking = false;
 	    this.board.clearLoading();
@@ -587,9 +591,10 @@ class ChessReviewApp {
     return this.soundPreloadPromise;
   }
 
-  _syncActionButtons() {
-    const engineReady = !!this.engine?.ready;
-    this.elBtnReview.disabled = this.isAnalyzing || !engineReady || this.gameMoves.length === 0;
+	  _syncActionButtons() {
+	    const engineReady = !!this.engine?.ready;
+	    const serverReview = this.engineSettings.analysisLocation === 'netlify';
+	    this.elBtnReview.disabled = this.isAnalyzing || this.gameMoves.length === 0 || (!serverReview && !engineReady);
     if (this.elBtnCoachStart) this.elBtnCoachStart.disabled = this.isAnalyzing || !engineReady;
     if (this.elBtnCoachTakeback) {
       this.elBtnCoachTakeback.disabled = !this.coachMode.active || this.gameMoves.length === 0;
@@ -2148,9 +2153,10 @@ class ChessReviewApp {
   }
 
   _resetGame() {
-    this.liveEvalToken += 1;
-	    this.analysisResults = null;
-	    if (this.elReviewBtnText) this.elReviewBtnText.textContent = 'Start Review';
+	    this.liveEvalToken += 1;
+		    this.analysisResults = null;
+		    this.explorerReturnState = null;
+		    if (this.elReviewBtnText) this.elReviewBtnText.textContent = 'Start Review';
     this.liveMoveResults = [];
 	    this.currentMoveIndex = -1;
 	    this._resetCoachHint();
@@ -2198,9 +2204,10 @@ class ChessReviewApp {
     }
     this._syncCoachVisibility();
 
-    this.originalGameMoves = moves.slice();
-	    this.gameMoves = moves.slice();
-	    this.currentMoveIndex = -1;
+	    this.originalGameMoves = moves.slice();
+		    this.gameMoves = moves.slice();
+		    this.currentMoveIndex = -1;
+		    this.explorerReturnState = null;
 	    this._resetCoachHint();
 	    this.analysisResults = null;
 	    if (this.elReviewBtnText) this.elReviewBtnText.textContent = 'Start Review';
@@ -2747,7 +2754,8 @@ class ChessReviewApp {
 	  }
 	
 	  async _startReview() {
-    if (this.isAnalyzing || this.gameMoves.length === 0 || !this.engine?.ready) return;
+    const serverReview = this.engineSettings.analysisLocation === 'netlify';
+    if (this.isAnalyzing || this.gameMoves.length === 0 || (!serverReview && !this.engine?.ready)) return;
 
     this.isAnalyzing = true;
     this.liveEvalToken += 1;
@@ -2775,10 +2783,19 @@ class ChessReviewApp {
       if (this.engineSettings.analysisLocation === 'netlify') {
         try {
           this.analysisResults = await this._analyzeGameOnServer();
-        } catch (serverErr) {
-          console.warn('Server analysis failed, falling back to browser:', serverErr);
-          this.elReviewBtnText.textContent = 'Server unavailable. Using browser...';
-          this.elProgressFill.style.width = '0%';
+	        } catch (serverErr) {
+	          console.warn('Server analysis failed, falling back to browser:', serverErr);
+	          this.elReviewBtnText.textContent = 'Server unavailable. Using browser...';
+	          this.elProgressFill.style.width = '0%';
+	          this._updateLiveEvalPanel({
+	            busy: true,
+	            score: null,
+	            line: 'Server review failed. Continuing in browser.',
+	            meta: serverErr.message || 'Browser review is starting now.',
+	          });
+	          if (!this.engine?.ready) {
+	            throw new Error('Server review failed and the browser engine is not ready yet. Try again once Stockfish finishes loading.');
+	          }
 	          this.analysisResults = await this.analyzer.analyzeGame(
 	            this.gameMoves,
 	            this.engine,
@@ -2817,26 +2834,39 @@ class ChessReviewApp {
     }
   }
 
-  async _analyzeGameOnServer() {
-    const reviewProfile = this._getReviewProfile();
-    this.elReviewBtnText.textContent = 'Sending to Server...';
-    this.elProgressFill.style.width = '12%';
-
-    const response = await fetch('/.netlify/functions/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        moves: this.gameMoves,
-        headers: this.gameHeaders || {},
-        initialFen: this.initialFen,
-        profile: {
-          key: reviewProfile.key,
-	          depth: Math.min(reviewProfile.depth, 14),
-          multiPv: Math.min(reviewProfile.multiPv, 3),
-          timeoutMs: Math.min(reviewProfile.timeoutMs, 9000),
-        },
-      }),
-    });
+	  async _analyzeGameOnServer() {
+	    const reviewProfile = this._getReviewProfile();
+	    this.elReviewBtnText.textContent = 'Sending to Server...';
+	    this.elProgressFill.style.width = '12%';
+	    const controller = new AbortController();
+	    const timeout = setTimeout(() => controller.abort(), 45000);
+	
+	    let response;
+	    try {
+	      response = await fetch('/.netlify/functions/analyze', {
+	        method: 'POST',
+	        headers: { 'Content-Type': 'application/json' },
+	        signal: controller.signal,
+	        body: JSON.stringify({
+	          moves: this.gameMoves,
+	          headers: this.gameHeaders || {},
+	          initialFen: this.initialFen,
+	          profile: {
+	            key: reviewProfile.key,
+		            depth: Math.min(reviewProfile.depth, 14),
+	            multiPv: Math.min(reviewProfile.multiPv, 3),
+	            timeoutMs: Math.min(reviewProfile.timeoutMs, 9000),
+	          },
+	        }),
+	      });
+	    } catch (err) {
+	      if (err.name === 'AbortError') {
+	        throw new Error('Server review timed out. Falling back to browser review.');
+	      }
+	      throw err;
+	    } finally {
+	      clearTimeout(timeout);
+	    }
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -3089,6 +3119,7 @@ class ChessReviewApp {
 	    if (this.elInsightEndgame) this.elInsightEndgame.textContent = '--';
 	    this.elInsightCoach.textContent = '';
 	    if (this.elBtnLineExplorer) this.elBtnLineExplorer.disabled = true;
+	    if (this.elBtnReturnExplorer) this.elBtnReturnExplorer.hidden = !this.explorerReturnState;
 	    this.elInsightAlternatives.innerHTML = '';
 	  }
 
@@ -3134,6 +3165,7 @@ class ChessReviewApp {
 	      this.elBtnLineExplorer.disabled = !result.bestMove || result.bestMove === result.moveUci;
 	      this.elBtnLineExplorer.dataset.moveIndex = String(result.moveIndex);
 	    }
+	    if (this.elBtnReturnExplorer) this.elBtnReturnExplorer.hidden = !this.explorerReturnState;
 
     if (!result.alternatives || result.alternatives.length === 0) {
       this.elInsightAlternatives.innerHTML = '';
@@ -3155,6 +3187,20 @@ class ChessReviewApp {
 	    const index = Number(this.elBtnLineExplorer?.dataset.moveIndex ?? this.currentMoveIndex);
 	    const result = this.analysisResults?.[index] || this.liveMoveResults?.[index];
 	    if (!result?.bestMove || result.bestMove === result.moveUci || !result.fen) return;
+	    if (!this.explorerReturnState) {
+	      this.explorerReturnState = {
+	        gameMoves: this.gameMoves.slice(),
+	        originalGameMoves: this.originalGameMoves.slice(),
+	        initialFen: this.initialFen,
+	        gameHeaders: { ...(this.gameHeaders || {}) },
+	        analysisResults: this.analysisResults,
+	        liveMoveResults: this.liveMoveResults.slice(),
+	        liveEvalHistory: this.liveEvalHistory.slice(),
+	        currentMoveIndex: this.currentMoveIndex,
+	        coachMode: { ...this.coachMode },
+	        boardFlipped: this.board.flipped,
+	      };
+	    }
 
 	    const branch = new Chess(result.fen);
 	    const move = branch.move({
@@ -3166,7 +3212,6 @@ class ChessReviewApp {
 
 	    const prefix = this.gameMoves.slice(0, Math.max(0, index));
 	    this.gameMoves = [...prefix, move.san];
-	    this.originalGameMoves = this.gameMoves.slice();
 	    this.chess = new Chess(this.initialFen);
 	    for (const san of this.gameMoves) this.chess.move(san, { sloppy: true });
 	    this.currentMoveIndex = this.gameMoves.length - 1;
@@ -3196,6 +3241,41 @@ class ChessReviewApp {
 	      moveObj: move,
 	      moveIndex: this.currentMoveIndex,
 	    });
+	  }
+
+	  _returnFromLineExplorer() {
+	    const state = this.explorerReturnState;
+	    if (!state) return;
+	    this.liveEvalToken += 1;
+	    this.explorerReturnState = null;
+	    this.gameMoves = state.gameMoves.slice();
+	    this.originalGameMoves = state.originalGameMoves.slice();
+	    this.initialFen = state.initialFen;
+	    this.gameHeaders = { ...(state.gameHeaders || {}) };
+	    this.analysisResults = state.analysisResults;
+	    this.liveMoveResults = state.liveMoveResults.slice();
+	    this.liveEvalHistory = state.liveEvalHistory.slice();
+	    this.coachMode = { ...state.coachMode, thinking: false };
+	    this.chess = new Chess(this.initialFen);
+	    for (const san of this.gameMoves.slice(0, state.currentMoveIndex + 1)) {
+	      this.chess.move(san, { sloppy: true });
+	    }
+	    this.currentMoveIndex = state.currentMoveIndex;
+	    if (this.board.flipped !== state.boardFlipped) this.board.flip();
+	    this.board.setChessInstance(this.chess);
+	    this._syncPlayerNameplates();
+	    this._syncCoachVisibility();
+	    this._syncCoachControls();
+	    this._renderMoveList();
+	    this._showOpeningInfo(this.analysisResults?.opening || this.analyzer.detectOpening(this.gameMoves));
+	    if (this.analysisResults) {
+	      this._showReviewSummary();
+	      this._renderCriticalMoments();
+	    }
+	    const restoreIndex = this.currentMoveIndex;
+	    this.currentMoveIndex = -9999;
+	    this._goToMove(restoreIndex);
+	    this._setCoachDialog('Returned to the original review.', 'Review');
 	  }
 
 	  _toggleAutoPlay() {

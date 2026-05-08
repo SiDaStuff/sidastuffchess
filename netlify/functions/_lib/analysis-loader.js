@@ -9,7 +9,16 @@ function loadChess() {
 
 function loadAnalyzer() {
   const Chess = loadChess();
-  const analysisPath = path.resolve(__dirname, '../../../public/js/analysis.js');
+  const candidates = [
+    path.resolve(__dirname, '../../public/js/analysis.js'),
+    path.resolve(__dirname, '../../../public/js/analysis.js'),
+    path.resolve(process.cwd(), 'public/js/analysis.js'),
+    path.resolve(process.cwd(), '../public/js/analysis.js'),
+  ];
+  const analysisPath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!analysisPath) {
+    throw new Error(`Could not find public/js/analysis.js. Checked: ${candidates.join(', ')}`);
+  }
   const source = fs.readFileSync(analysisPath, 'utf8');
   const sandbox = {
     Chess,

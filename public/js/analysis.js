@@ -963,11 +963,17 @@ class MoveAnalyzer {
 	    const mateInOne = this._immediateMateMove(fenAfter);
 	    if (mateInOne) return { in: 1, moveSan: mateInOne.san, text: `Opponent has mate in 1: ${mateInOne.san}` };
 	    const board = new Chess(fenAfter);
-	    const attackingMoves = board.moves({ verbose: true }).slice(0, 48);
+	    const legal = board.moves({ verbose: true });
+	    if (legal.length > 32) return null;
+	    const start = Date.now();
+	    const attackingMoves = legal
+	      .filter((move) => /[+#]/.test(move.san || '') || move.captured || move.promotion)
+	      .slice(0, 14);
 	    for (const attack of attackingMoves) {
+	      if (Date.now() - start > 8) return null;
 	      const playedAttack = board.move(attack.san);
 	      if (!playedAttack) continue;
-	      const replies = board.moves({ verbose: true });
+	      const replies = board.moves({ verbose: true }).slice(0, 24);
 	      let forced = replies.length > 0;
 	      for (const reply of replies.slice(0, 48)) {
 	        const playedReply = board.move(reply.san);
