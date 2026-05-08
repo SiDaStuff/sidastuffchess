@@ -91,22 +91,27 @@ class BrowserMoveCoach {
     const key = this.analyzer.getClassificationKey(payload.classification);
     const statements = [this._classificationStatement(key, payload, moveInfo)];
 
-    statements.push(...this._strategicStatements(payload, moveInfo));
-    statements.push(...this._tacticalStatements(payload, moveInfo));
+	    statements.push(...this._strategicStatements(payload, moveInfo));
+	    statements.push(...this._tacticalStatements(payload, moveInfo));
+	
+	    const bestMoveIdea = this.analyzer._describeBestMove(payload.fenBefore, payload.bestMove, payload.bestMoveSan);
+	    const opponentReply = this._describeOpponentReply(payload);
+	    const mateTrap = key === 'BRILLIANT'
+	      ? this.analyzer._mateTrapSacrifice(payload.fenBefore, payload.moveSan)
+	      : null;
 
-    const bestMoveIdea = this.analyzer._describeBestMove(payload.fenBefore, payload.bestMove, payload.bestMoveSan);
-    const opponentReply = this._describeOpponentReply(payload);
-
-    if (['INACCURACY', 'MISTAKE', 'BLUNDER', 'MISS'].includes(key)) {
-      if (opponentReply) {
-        statements.push(opponentReply);
-      }
+	    if (['INACCURACY', 'MISTAKE', 'BLUNDER', 'MISS'].includes(key)) {
+	      if (opponentReply) {
+	        statements.push(opponentReply);
+	      }
       if (payload.bestMoveSan) {
         statements.push(`The cleaner plan was ${payload.bestMoveSan}${bestMoveIdea ? `: ${bestMoveIdea}.` : '.'}`);
       }
-    } else if (payload.bestMoveSan && payload.bestMoveSan !== moveInfo.san && key !== 'BOOK') {
-      statements.push(`It stays close to the engine's preferred idea, ${payload.bestMoveSan}.`);
-    }
+	    } else if (mateTrap) {
+	      statements.push(`If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; declining it leaves the pressure.`);
+	    } else if (payload.bestMoveSan && payload.bestMoveSan !== moveInfo.san && key !== 'BOOK') {
+	      statements.push(`It stays close to the engine's preferred idea, ${payload.bestMoveSan}.`);
+	    }
 
     return statements
       .filter(Boolean)
@@ -134,21 +139,27 @@ class BrowserMoveCoach {
     };
   }
 
-  _classificationStatement(key, payload, move) {
-    const san = move.san || payload.moveSan || 'This move';
-    const descriptions = {
-      BRILLIANT: 'is brilliant because it solves a concrete tactical problem while keeping the position alive',
-      GREAT: 'is a great move and one of the few ways to keep full pressure',
-      BEST: 'is the best move in the position',
-      EXCELLENT: 'is excellent and stays very close to the engine line',
-      GOOD: 'is playable, though there was a cleaner option',
-      BOOK: 'stays in book',
-      FORCED: 'was forced by the position',
-      INACCURACY: 'is an inaccuracy',
-      MISTAKE: `is a mistake and gives up about ${Math.round(payload.cpLoss || 0)} centipawns`,
-      BLUNDER: `is a blunder and drops about ${Math.round(payload.cpLoss || 0)} centipawns`,
-      MISS: 'misses a chance to convert the position',
-    };
+	  _classificationStatement(key, payload, move) {
+	    const san = move.san || payload.moveSan || 'This move';
+	    const epLoss = typeof payload.expectedLoss === 'number'
+	      ? Math.round(payload.expectedLoss * 100)
+	      : null;
+	    const lossText = epLoss !== null && epLoss > 0
+	      ? `changes the expected result by about ${epLoss} percentage points`
+	      : `gives up about ${Math.round(payload.cpLoss || 0)} centipawns`;
+	    const descriptions = {
+	      BRILLIANT: 'is brilliant because it solves a concrete tactical problem while keeping the position alive',
+	      GREAT: 'is a great move and one of the few ways to keep full pressure',
+	      BEST: 'is the best move in the position',
+	      EXCELLENT: 'is excellent and stays very close to the engine line',
+	      GOOD: 'is playable, though there was a cleaner option',
+	      BOOK: 'stays in book',
+	      FORCED: 'was forced by the position',
+	      INACCURACY: 'is an inaccuracy',
+	      MISTAKE: `is a mistake and ${lossText}`,
+	      BLUNDER: `is a blunder and ${lossText}`,
+	      MISS: 'misses a chance to convert the position',
+	    };
     return `${san} ${descriptions[key] || 'is worth reviewing'}.`;
   }
 
@@ -222,19 +233,23 @@ class BrowserMoveCoach {
     return statements;
   }
 
-  _describeOpponentReply(payload) {
-    const replyMove = payload.opponentBestMove || payload.replyMove;
-    if (!payload.fenAfter || !replyMove || replyMove.length < 4) return '';
+	  _describeOpponentReply(payload) {
+	    const replyMove = payload.opponentBestMove || payload.replyMove;
+	    if (!payload.fenAfter || !replyMove || replyMove.length < 4) return '';
 
     const chess = new Chess(payload.fenAfter);
     const reply = chess.move({
       from: replyMove.slice(0, 2),
       to: replyMove.slice(2, 4),
       promotion: replyMove[4],
-    });
-    if (!reply) return '';
+	    });
+	    if (!reply) return '';
 
-    const replyFen = chess.fen();
+	    if ((reply.san || '').endsWith('#')) {
+	      return `The immediate problem is ${reply.san}: it is checkmate.`;
+	    }
+	
+	    const replyFen = chess.fen();
     const attacks = this._attacksFrom(replyFen, reply.to, reply.color, reply.piece);
     const targets = attacks
       .map((square) => ({ square, piece: this._pieceAt(replyFen, square) }))
@@ -398,11 +413,29 @@ class MoveAnalyzer {
     return (pawns >= 0 ? '+' : '') + pawns.toFixed(1);
   }
 
-  evalBarPercent(cpScore) {
-    const x = cpScore / 100;
-    const percent = 50 + 50 * (2 / (1 + Math.exp(-0.4 * x)) - 1);
-    return clamp(percent, 2, 98);
-  }
+	  evalBarPercent(cpScore) {
+	    const x = cpScore / 100;
+	    const percent = 50 + 50 * (2 / (1 + Math.exp(-0.4 * x)) - 1);
+	    return clamp(percent, 2, 98);
+	  }
+
+	  expectedPoints(edgeCp, rating = 1200) {
+	    if (edgeCp >= 9900) return 1;
+	    if (edgeCp <= -9900) return 0;
+	    const playerRating = clamp(Number(rating) || 1200, 100, 2800);
+	    const scale = clamp(300 - ((playerRating - 1000) * 0.055), 170, 360);
+	    return clamp(1 / (1 + Math.exp(-edgeCp / scale)), 0, 1);
+	  }
+
+	  expectedPointLoss(playerEdgeBefore, playerEdgeAfter, rating = 1200) {
+	    return Math.max(0, this.expectedPoints(playerEdgeBefore, rating) - this.expectedPoints(playerEdgeAfter, rating));
+	  }
+
+	  _ratingForColor(headers = {}, isWhite) {
+	    const raw = isWhite ? headers.WhiteElo : headers.BlackElo;
+	    const rating = parseInt(raw, 10);
+	    return Number.isFinite(rating) ? clamp(rating, 100, 2800) : 1200;
+	  }
 
   getClassificationKey(classificationObj) {
     for (const key of CLASSIFICATION_ORDER) {
@@ -546,7 +579,7 @@ class MoveAnalyzer {
     return '';
   }
 
-	  classifyMove(moveData) {
+		  classifyMove(moveData) {
 	    const {
 	      movePly,
 	      moveSan,
@@ -561,25 +594,33 @@ class MoveAnalyzer {
 	      isBestMove,
 	      gapToSecond,
 	      scoreBefore,
-	      scoreAfter,
-	      phase,
-	      opponentJustBlundered,
-	    } = moveData;
+		      scoreAfter,
+		      phase,
+		      playerRating = 1200,
+		      opponentJustBlundered,
+		    } = moveData;
+		    const opponentMateAfter = this._opponentImmediateMateAfter(fenBefore, moveSan);
+		    const expectedLoss = this.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
+		    const nearlyBest = isBestMove || cpLoss <= 18 || expectedLoss <= 0.012;
+		    const positionAfterOk = playerEdgeAfter > -120 && this.expectedPoints(playerEdgeAfter, playerRating) >= 0.38;
+		    const wasAlreadyCrushing = playerEdgeBefore >= 900 && !opponentJustBlundered;
+		
+		    if (!opponentMateAfter && this._isKnownBrilliantMove({ movePly, moveSan, moveUci, fenBefore })) {
+		      return MoveClassification.BRILLIANT;
+		    }
 	
-	    if (this._isKnownBrilliantMove({ movePly, moveSan, moveUci, fenBefore })) {
-	      return MoveClassification.BRILLIANT;
-	    }
+		    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
+		    if (!opponentMateAfter && mateTrap && nearlyBest && positionAfterOk) {
+		      return MoveClassification.BRILLIANT;
+		    }
 
-	    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
-	    if (mateTrap) {
-	      return MoveClassification.BRILLIANT;
-	    }
-
-    const rareBestSacrifice = isPieceSacrifice
-      && isBestMove
-      && cpLoss <= 10
-      && gapToSecond >= 70
-      && playerEdgeAfter >= playerEdgeBefore - 20;
+	    const rareBestSacrifice = isPieceSacrifice
+	      && nearlyBest
+	      && gapToSecond >= 70
+	      && playerEdgeAfter >= playerEdgeBefore - 20
+	      && positionAfterOk
+	      && !wasAlreadyCrushing
+	      && !opponentMateAfter;
 
     if (rareBestSacrifice) {
       return MoveClassification.BRILLIANT;
@@ -589,21 +630,30 @@ class MoveAnalyzer {
       return MoveClassification.BOOK;
     }
 
-    if (isCheckmate) {
-      return isPieceSacrifice ? MoveClassification.BRILLIANT : MoveClassification.BEST;
-    }
+	    if (isCheckmate) {
+	      return isPieceSacrifice ? MoveClassification.BRILLIANT : MoveClassification.BEST;
+	    }
 
-    if (numLegalMoves === 1) {
-      return MoveClassification.FORCED;
-    }
+	    if (numLegalMoves === 1) {
+	      return MoveClassification.FORCED;
+	    }
 
-    const hasWinningOpportunity = playerEdgeBefore >= 220;
-    const droppedWin = hasWinningOpportunity && playerEdgeAfter < 120;
-    const missedPunish = opponentJustBlundered && hasWinningOpportunity && !isBestMove && cpLoss >= 70;
+	    if (opponentMateAfter) {
+	      return cpLoss >= 120 || playerEdgeAfter <= -9000
+	        ? MoveClassification.BLUNDER
+	        : MoveClassification.MISTAKE;
+	    }
 
-    if (missedPunish || (droppedWin && cpLoss >= 100)) {
-      return MoveClassification.MISS;
-    }
+	    const hasWinningOpportunity = playerEdgeBefore >= 220;
+	    const droppedWin = hasWinningOpportunity && playerEdgeAfter < 120;
+	    const missedPunish = opponentJustBlundered
+	      && hasWinningOpportunity
+	      && !nearlyBest
+	      && (cpLoss >= 70 || expectedLoss >= 0.05);
+	
+	    if (missedPunish || (droppedWin && cpLoss >= 100)) {
+	      return MoveClassification.MISS;
+	    }
 
 	    const effectiveCpLoss = this._classificationCpLoss({
 	      cpLoss,
@@ -613,27 +663,33 @@ class MoveAnalyzer {
 	      isCheckmate,
 	    });
 
-	    if (effectiveCpLoss >= 260) return MoveClassification.BLUNDER;
-	    if (effectiveCpLoss >= 120) return MoveClassification.MISTAKE;
-	    if (effectiveCpLoss >= 55) return MoveClassification.INACCURACY;
+	    if (expectedLoss > 0.20 || effectiveCpLoss >= 320) return MoveClassification.BLUNDER;
+	    if (expectedLoss > 0.10 || effectiveCpLoss >= 155) return MoveClassification.MISTAKE;
+	    if (expectedLoss > 0.05 || effectiveCpLoss >= 70) return MoveClassification.INACCURACY;
 
     const wasCloseGame = Math.abs(scoreBefore) < 120;
     const stillClose = Math.abs(scoreAfter) < 140;
     const uniqueBest = gapToSecond >= 120;
 
-    if (isPieceSacrifice && isBestMove && cpLoss <= 10 && (uniqueBest || (wasCloseGame && stillClose))) {
-      return MoveClassification.BRILLIANT;
-    }
-
-    if (isBestMove && uniqueBest) {
-      return MoveClassification.GREAT;
-    }
-
-	    if (isBestMove || effectiveCpLoss <= 8) {
-	      return MoveClassification.BEST;
+	    if (isPieceSacrifice
+	      && nearlyBest
+	      && !opponentMateAfter
+	      && positionAfterOk
+	      && !wasAlreadyCrushing
+	      && (uniqueBest || (wasCloseGame && stillClose))) {
+	      return MoveClassification.BRILLIANT;
 	    }
 	
-	    if (effectiveCpLoss <= 20) return MoveClassification.EXCELLENT;
+	    const onlyGoodMove = nearlyBest && uniqueBest && gapToSecond >= 140;
+	    if (isBestMove && onlyGoodMove) {
+	      return MoveClassification.GREAT;
+	    }
+	
+	    if (isBestMove || expectedLoss <= 0.003 || effectiveCpLoss <= 8) {
+	      return MoveClassification.BEST;
+	    }
+		
+	    if (expectedLoss <= 0.02 || effectiveCpLoss <= 28) return MoveClassification.EXCELLENT;
 	    return MoveClassification.GOOD;
 	  }
 
@@ -650,11 +706,12 @@ class MoveAnalyzer {
 	    return cpLoss;
 	  }
 
-	  _mateTrapSacrifice(fenBefore, moveSan) {
-	    if (!fenBefore || !moveSan) return null;
-	    const board = new Chess(fenBefore);
-	    const moveObj = board.move(moveSan, { sloppy: true });
-	    if (!moveObj) return null;
+		  _mateTrapSacrifice(fenBefore, moveSan) {
+		    if (!fenBefore || !moveSan) return null;
+		    const board = new Chess(fenBefore);
+		    const moveObj = board.move(moveSan, { sloppy: true });
+		    if (!moveObj) return null;
+		    if (this._immediateMateMove(board.fen())) return null;
 
 	    const value = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 	    const movedValue = value[moveObj.piece] || 0;
@@ -684,8 +741,29 @@ class MoveAnalyzer {
 	      }
 	    }
 
-	    return null;
-	  }
+		    return null;
+		  }
+
+		  _opponentImmediateMateAfter(fenBefore, moveSan) {
+		    if (!fenBefore || !moveSan) return null;
+		    const board = new Chess(fenBefore);
+		    const moveObj = board.move(moveSan, { sloppy: true });
+		    if (!moveObj || board.in_checkmate()) return null;
+		    return this._immediateMateMove(board.fen());
+		  }
+
+		  _immediateMateMove(fen) {
+		    if (!fen) return null;
+		    const board = new Chess(fen);
+		    const legalMoves = board.moves({ verbose: true });
+		    for (const move of legalMoves) {
+		      const played = board.move(move.san);
+		      const isMate = !!played && board.in_checkmate();
+		      if (played) board.undo();
+		      if (isMate) return move;
+		    }
+		    return null;
+		  }
 
   _isKnownBrilliantMove({ movePly, moveSan, moveUci, fenBefore }) {
     const cleanMove = this._cleanSanMove(moveSan);
@@ -768,9 +846,10 @@ class MoveAnalyzer {
     if (coachText) return coachText;
 
     const {
-      classification,
-      cpLoss,
-      bestMoveSan,
+	          classification,
+	          cpLoss,
+	          expectedLoss,
+	          bestMoveSan,
       bestMove,
       moveSan,
       opponentJustBlundered,
@@ -813,11 +892,14 @@ class MoveAnalyzer {
       }
       return `${moveSan} is an inaccuracy. ${bestMoveSan || 'The best move'} kept a healthier edge.`;
     }
-    if (key === 'MISTAKE') {
-      if (punishText) {
-        return `${moveSan} is a mistake because ${punishText}. ${bestMoveSan || 'The best move'} was needed here.`;
-      }
-      return `${moveSan} gives up around ${Math.round(cpLoss)} cp. ${bestMoveSan || 'Best move'} was needed.`;
+	    if (key === 'MISTAKE') {
+	      if (punishText) {
+	        return `${moveSan} is a mistake because ${punishText}. ${bestMoveSan || 'The best move'} was needed here.`;
+	      }
+	      const lossText = typeof expectedLoss === 'number' && expectedLoss > 0
+	        ? `changes the expected result by about ${Math.round(expectedLoss * 100)} percentage points`
+	        : `gives up around ${Math.round(cpLoss)} cp`;
+	      return `${moveSan} ${lossText}. ${bestMoveSan || 'Best move'} was needed.`;
     }
     if (key === 'MISS') {
       if (opponentJustBlundered) {
@@ -831,11 +913,14 @@ class MoveAnalyzer {
       }
       return `${moveSan} is a miss. ${bestMoveSan || 'The best move'} would have kept the winning chances alive.`;
     }
-    if (punishText) {
-      return `${moveSan} is a blunder because ${punishText}. ${bestMoveSan || 'Best move'} was critical here.`;
-    }
-    return `${moveSan} is a blunder and drops about ${Math.round(cpLoss)} cp. ${bestMoveSan || 'Best move'} was critical here.`;
-  }
+	    if (punishText) {
+	      return `${moveSan} is a blunder because ${punishText}. ${bestMoveSan || 'Best move'} was critical here.`;
+	    }
+	    const lossText = typeof expectedLoss === 'number' && expectedLoss > 0
+	      ? `changes the expected result by about ${Math.round(expectedLoss * 100)} percentage points`
+	      : `drops about ${Math.round(cpLoss)} cp`;
+	    return `${moveSan} is a blunder and ${lossText}. ${bestMoveSan || 'Best move'} was critical here.`;
+	  }
 
   _lineToSan(fen, pvUci, maxPlies = 6) {
     if (!pvUci) return '';
@@ -971,10 +1056,12 @@ class MoveAnalyzer {
         isWhitePlaying
       );
 
-      const playerEdgeBefore = isWhitePlaying ? scoreBefore : -scoreBefore;
-      const playerEdgeAfter = isWhitePlaying ? scoreAfter : -scoreAfter;
-      const isBestMove = movePlayedUci === bestMove;
-      const opponentJustBlundered = i > 0 && results[i - 1].classificationKey === 'BLUNDER';
+	      const playerEdgeBefore = isWhitePlaying ? scoreBefore : -scoreBefore;
+	      const playerEdgeAfter = isWhitePlaying ? scoreAfter : -scoreAfter;
+	      const playerRating = this._ratingForColor(options.headers, isWhitePlaying);
+	      const expectedLoss = this.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
+	      const isBestMove = movePlayedUci === bestMove;
+	      const opponentJustBlundered = i > 0 && results[i - 1].classificationKey === 'BLUNDER';
 
       const classification = this.classifyMove({
         movePly,
@@ -990,10 +1077,11 @@ class MoveAnalyzer {
         isBestMove,
         gapToSecond,
 	        scoreBefore,
-	        scoreAfter,
-	        phase,
-	        opponentJustBlundered,
-	      });
+		        scoreAfter,
+		        phase,
+		        playerRating,
+		        opponentJustBlundered,
+		      });
 
       const alternatives = evals[i].lines.slice(0, this.multiPvCount).map((line, idx) => ({
         rank: idx + 1,
@@ -1018,7 +1106,9 @@ class MoveAnalyzer {
         BLUNDER: 1.2,
         MISS: 1.35,
       };
-      const severityScore = (severityScoreMap[classificationKey] || 0.1) + (Math.min(cpLoss, 600) / 1000);
+	      const severityScore = (severityScoreMap[classificationKey] || 0.1)
+	        + (expectedLoss * 2.2)
+	        + (Math.min(cpLoss, 600) / 1500);
 	
 	      results.push({
         move: moves[i],
@@ -1032,9 +1122,11 @@ class MoveAnalyzer {
         classificationKey,
         evalBefore: scoreBefore,
         evalAfter: scoreAfter,
-        swing: scoreAfter - scoreBefore,
-        cpLoss,
-        bestMove,
+	        swing: scoreAfter - scoreBefore,
+	        cpLoss,
+	        expectedLoss,
+	        playerRating,
+	        bestMove,
         bestMoveSan,
         opponentBestMove,
         opponentBestMoveSan,
@@ -1045,7 +1137,7 @@ class MoveAnalyzer {
         fen,
         fenAfter,
         phase,
-        isCriticalMoment: cpLoss >= 100 || classificationKey === 'MISS' || classificationKey === 'BLUNDER',
+	        isCriticalMoment: expectedLoss >= 0.08 || cpLoss >= 120 || classificationKey === 'MISS' || classificationKey === 'BLUNDER',
         severityScore,
         opponentJustBlundered,
         coachText: this._coachingText({
@@ -1059,9 +1151,10 @@ class MoveAnalyzer {
           moveSan: movePlayedSan,
           movePly,
           scoreBefore,
-          scoreAfter,
-          isWhite: isWhitePlaying,
-          opponentJustBlundered,
+	          scoreAfter,
+	          isWhite: isWhitePlaying,
+	          playerRating,
+	          opponentJustBlundered,
           fenBefore: fen,
           fenAfter,
         }),
@@ -1084,11 +1177,28 @@ class MoveAnalyzer {
     return results;
   }
 
-  calculateAccuracy(moveResults, color) {
-    const acpl = this.calculateAcpl(moveResults, color);
-    const accuracy = 103.1668 * Math.exp(-0.04354 * acpl) - 3.1669;
-    return clamp(accuracy, 0, 100);
-  }
+	  calculateAccuracy(moveResults, color) {
+	    const expectedLoss = this.calculateExpectedLoss(moveResults, color);
+	    if (expectedLoss !== null) {
+	      return Math.round(clamp(100 - (expectedLoss * 220), 0, 100));
+	    }
+	    const acpl = this.calculateAcpl(moveResults, color);
+	    const accuracy = 103.1668 * Math.exp(-0.04354 * acpl) - 3.1669;
+	    return Math.round(clamp(accuracy, 0, 100));
+	  }
+
+	  calculateExpectedLoss(moveResults, color) {
+	    const colorMoves = moveResults.filter((m) =>
+	      (color === 'white' && m.isWhite) || (color === 'black' && !m.isWhite)
+	    );
+	    const scored = colorMoves.filter((m) =>
+	      m.classification !== MoveClassification.BOOK
+	      && m.classification !== MoveClassification.FORCED
+	      && typeof m.expectedLoss === 'number'
+	    );
+	    if (scored.length === 0) return null;
+	    return scored.reduce((sum, move) => sum + clamp(move.expectedLoss, 0, 1), 0) / scored.length;
+	  }
 
   calculateAcpl(moveResults, color) {
     const colorMoves = moveResults.filter((m) =>
@@ -1158,8 +1268,11 @@ class MoveAnalyzer {
         continue;
       }
 
-      const acpl = this.calculateAcpl(phaseMoves, color);
-      const accuracy = 103.1668 * Math.exp(-0.04354 * acpl) - 3.1669;
+	      const acpl = this.calculateAcpl(phaseMoves, color);
+	      const expectedLoss = this.calculateExpectedLoss(phaseMoves, color);
+	      const accuracy = expectedLoss !== null
+	        ? 100 - (expectedLoss * 220)
+	        : 103.1668 * Math.exp(-0.04354 * acpl) - 3.1669;
 
       result[phase] = {
         moves: phaseMoves.length,

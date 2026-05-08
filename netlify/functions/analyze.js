@@ -48,7 +48,7 @@ exports.handler = async (event) => {
   const engine = new ServerStockfishEngine();
   try {
     await engine.init();
-    const results = await analyzer.analyzeGame(moves, engine, null, { initialFen });
+    const results = await analyzer.analyzeGame(moves, engine, null, { initialFen, headers: payload.headers || {} });
     const plainResults = results.map((entry) => ({
       ...entry,
       classification: undefined,

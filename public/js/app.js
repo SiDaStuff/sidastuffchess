@@ -50,10 +50,11 @@ class ChessReviewApp {
     this.board.setChessInstance(this.chess);
     this.board.interactive = true;
     this.board.onMove = (from, to) => this._handleBoardMove(from, to);
-    this.board.onFlip = () => {
-      this._syncPlayerNameplates();
-      this._refreshMoveBadgePosition();
-    };
+	    this.board.onFlip = () => {
+	      this._syncPlayerNameplates();
+	      this._updateEvalBar(this.currentEvalScore);
+	      this._refreshMoveBadgePosition();
+	    };
 
     this.elEvalGraph = document.getElementById('eval-graph');
     this.evalGraphCtx = this.elEvalGraph.getContext('2d');
@@ -1868,6 +1869,10 @@ class ChessReviewApp {
 	    const isBestMove = playedUci === bestMove;
 	    const opponentJustBlundered = moveIndex > 0 && this.liveMoveResults[moveIndex - 1]?.classificationKey === 'BLUNDER';
 	    const phase = this.analyzer._phaseFromFen(fenBefore, movePly);
+	    const playerRating = this.coachMode.active
+	      ? this.coachMode.elo
+	      : this.analyzer._ratingForColor(this.gameHeaders, isWhitePlaying);
+	    const expectedLoss = this.analyzer.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
 		    const classification = this.analyzer.classifyMove({
 	      movePly,
 	      moveSan: moveObj.san,
@@ -1883,9 +1888,10 @@ class ChessReviewApp {
       gapToSecond,
 	      scoreBefore,
 	      scoreAfter,
-	      phase,
-	      opponentJustBlundered,
-	    });
+		      phase,
+		      playerRating,
+		      opponentJustBlundered,
+		    });
 
     const alternatives = lines.slice(0, this._getReviewProfile().multiPv).map((line, idx) => ({
       rank: idx + 1,
@@ -1908,9 +1914,11 @@ class ChessReviewApp {
       classificationKey,
       evalBefore: scoreBefore,
       evalAfter: scoreAfter,
-      swing: scoreAfter - scoreBefore,
-      cpLoss,
-      bestMove,
+	      swing: scoreAfter - scoreBefore,
+	      cpLoss,
+	      expectedLoss,
+	      playerRating,
+	      bestMove,
       bestMoveSan,
       opponentBestMove,
       opponentBestMoveSan,
@@ -1921,14 +1929,15 @@ class ChessReviewApp {
       fen: fenBefore,
       fenAfter,
 	      phase,
-      isCriticalMoment: cpLoss >= 100 || classificationKey === 'MISS' || classificationKey === 'BLUNDER',
-      severityScore: (cpLoss / 100) + (classificationKey === 'BLUNDER' ? 1.2 : classificationKey === 'MISTAKE' ? 0.9 : 0.2),
+	      isCriticalMoment: expectedLoss >= 0.08 || cpLoss >= 120 || classificationKey === 'MISS' || classificationKey === 'BLUNDER',
+	      severityScore: (expectedLoss * 2.2) + (cpLoss / 150) + (classificationKey === 'BLUNDER' ? 1.2 : classificationKey === 'MISTAKE' ? 0.9 : 0.2),
 	      opponentJustBlundered,
 	      isCoachMove,
 	      coachText: this.analyzer._coachingText({
-        classification,
-        cpLoss,
-        bestMoveSan,
+	        classification,
+	        cpLoss,
+	        expectedLoss,
+	        bestMoveSan,
         bestMove: bestMove,
         opponentBestMove,
         opponentBestMoveSan,
@@ -1936,10 +1945,11 @@ class ChessReviewApp {
         moveSan: moveObj.san,
         movePly,
         scoreBefore,
-        scoreAfter,
-        isWhite: isWhitePlaying,
-        opponentJustBlundered,
-        fenBefore,
+	        scoreAfter,
+	        isWhite: isWhitePlaying,
+	        playerRating,
+	        opponentJustBlundered,
+	        fenBefore,
         fenAfter,
       }),
     };
@@ -2421,6 +2431,9 @@ class ChessReviewApp {
 	    this.currentEvalScore = typeof cpScore === 'number' ? cpScore : 0;
 	    const whitePct = this.analyzer.evalBarPercent(cpScore);
 	    const blackPct = 100 - whitePct;
+	    const flipped = !!this.board?.flipped;
+	    this.elEvalBarWhite.style.order = flipped ? '0' : '1';
+	    this.elEvalBarBlack.style.order = flipped ? '1' : '0';
 	    this.elEvalBarWhite.style.height = whitePct + '%';
 	    this.elEvalBarWhite.style.width = '100%';
 	    this.elEvalBarBlack.style.height = blackPct + '%';
@@ -2732,16 +2745,16 @@ class ChessReviewApp {
 	            this.gameMoves,
 	            this.engine,
 	            updateReviewProgress,
-	            { initialFen: this.initialFen }
-	          );
+		          { initialFen: this.initialFen, headers: this.gameHeaders }
+		        );
         }
       } else {
 	        this.analysisResults = await this.analyzer.analyzeGame(
 	          this.gameMoves,
 	          this.engine,
 	          updateReviewProgress,
-	          { initialFen: this.initialFen }
-	        );
+		          { initialFen: this.initialFen, headers: this.gameHeaders }
+		        );
       }
 
       this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
