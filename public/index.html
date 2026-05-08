@@ -172,12 +172,32 @@
 	                <span>Best Move</span>
 	                <strong id="insight-bestmove">--</strong>
 	              </div>
-	              <div class="insight-row">
-	                <span>Phase</span>
-	                <strong id="insight-phase">--</strong>
-	              </div>
-	              <p class="insight-coach" id="insight-coach"></p>
-	              <div class="insight-alternatives" id="insight-alternatives"></div>
+		              <div class="insight-row">
+		                <span>Phase</span>
+		                <strong id="insight-phase">--</strong>
+		              </div>
+		              <div class="insight-row insight-row-stack">
+		                <span>Plan Tags</span>
+		                <div class="insight-tags" id="insight-plan-tags"></div>
+		              </div>
+		              <div class="insight-row insight-row-stack" id="insight-threat-row" hidden>
+		                <span>Threat</span>
+		                <strong id="insight-threat">--</strong>
+		              </div>
+		              <div class="insight-row insight-row-stack" id="insight-endgame-row" hidden>
+		                <span>Endgame</span>
+		                <strong id="insight-endgame">--</strong>
+		              </div>
+		              <p class="insight-coach" id="insight-coach"></p>
+		              <div class="insight-actions">
+		                <button id="btn-line-explorer" class="btn btn-secondary btn-small" disabled>
+		                  <span class="btn-content">
+		                    <span class="material-symbols-outlined btn-symbol">timeline</span>
+		                    <span class="btn-label">Explore Best Line</span>
+		                  </span>
+		                </button>
+		              </div>
+		              <div class="insight-alternatives" id="insight-alternatives"></div>
 	            </div>
 	          </div>
 	        </div>
@@ -292,7 +312,7 @@
               <div class="summary-counts" id="summary-black"></div>
             </div>
           </div>
-          <div class="summary-metrics">
+	          <div class="summary-metrics">
             <div class="summary-metric-card">
               <span class="metric-label">White CAPS</span>
               <span class="metric-value" id="caps-white-val">--</span>
@@ -309,8 +329,23 @@
               <span class="metric-label">Black ACPL</span>
               <span class="metric-value" id="acpl-black-val">--</span>
             </div>
-          </div>
-          <div class="phase-breakdown" id="phase-breakdown"></div>
+	          </div>
+	          <div class="review-narrative" id="review-narrative"></div>
+	          <div class="review-extra-grid">
+	            <div class="review-extra-panel">
+	              <h4>Training Queue</h4>
+	              <div class="training-list" id="training-list"></div>
+	            </div>
+	            <div class="review-extra-panel">
+	              <h4>Opening Drift</h4>
+	              <div class="opening-drift" id="opening-drift"></div>
+	            </div>
+	            <div class="review-extra-panel">
+	              <h4>Mistake Patterns</h4>
+	              <div class="pattern-list" id="pattern-list"></div>
+	            </div>
+	          </div>
+	          <div class="phase-breakdown" id="phase-breakdown"></div>
         </div>
 
         <!-- Engine Line -->
@@ -362,8 +397,8 @@
             <label class="field">
               <span class="field-label">Review Location</span>
               <select id="analysis-location" class="input-select">
-                <option value="browser">Browser</option>
-                <option value="netlify">Server</option>
+	                <option value="browser">Browser</option>
+	                <option value="netlify" selected>Server</option>
               </select>
             </label>
           </div>

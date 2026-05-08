@@ -9,7 +9,7 @@ class ChessReviewApp {
 	      source: 'browser',
 	      module: 'full-single',
 		      strength: 'depth14',
-	      analysisLocation: 'browser',
+		      analysisLocation: 'netlify',
 	    };
 	    this.engineSettings.module = this._recommendedEngineModule();
     this.engineInitToken = 0;
@@ -145,22 +145,32 @@ class ChessReviewApp {
     this.elGameStatusDetails = document.getElementById('game-status-details');
 
     this.elCapsWhite = document.getElementById('caps-white-val');
-    this.elCapsBlack = document.getElementById('caps-black-val');
-    this.elAcplWhite = document.getElementById('acpl-white-val');
-    this.elAcplBlack = document.getElementById('acpl-black-val');
-    this.elPhaseBreakdown = document.getElementById('phase-breakdown');
+	    this.elCapsBlack = document.getElementById('caps-black-val');
+	    this.elAcplWhite = document.getElementById('acpl-white-val');
+	    this.elAcplBlack = document.getElementById('acpl-black-val');
+	    this.elPhaseBreakdown = document.getElementById('phase-breakdown');
+	    this.elReviewNarrative = document.getElementById('review-narrative');
+	    this.elTrainingList = document.getElementById('training-list');
+	    this.elOpeningDrift = document.getElementById('opening-drift');
+	    this.elPatternList = document.getElementById('pattern-list');
 
-    this.elMoveInsights = document.getElementById('move-insights');
-    this.elInsightEmpty = document.getElementById('insight-empty');
-    this.elInsightContent = document.getElementById('insight-content');
+	    this.elMoveInsights = document.getElementById('move-insights');
+	    this.elInsightEmpty = document.getElementById('insight-empty');
+	    this.elInsightContent = document.getElementById('insight-content');
     this.elInsightMove = document.getElementById('insight-move');
     this.elInsightClass = document.getElementById('insight-class');
     this.elInsightCpLoss = document.getElementById('insight-cploss');
-    this.elInsightSwing = document.getElementById('insight-swing');
-    this.elInsightBestMove = document.getElementById('insight-bestmove');
-    this.elInsightPhase = document.getElementById('insight-phase');
-    this.elInsightCoach = document.getElementById('insight-coach');
-    this.elInsightAlternatives = document.getElementById('insight-alternatives');
+	    this.elInsightSwing = document.getElementById('insight-swing');
+	    this.elInsightBestMove = document.getElementById('insight-bestmove');
+	    this.elInsightPhase = document.getElementById('insight-phase');
+	    this.elInsightPlanTags = document.getElementById('insight-plan-tags');
+	    this.elInsightThreatRow = document.getElementById('insight-threat-row');
+	    this.elInsightThreat = document.getElementById('insight-threat');
+	    this.elInsightEndgameRow = document.getElementById('insight-endgame-row');
+	    this.elInsightEndgame = document.getElementById('insight-endgame');
+	    this.elInsightCoach = document.getElementById('insight-coach');
+	    this.elBtnLineExplorer = document.getElementById('btn-line-explorer');
+	    this.elInsightAlternatives = document.getElementById('insight-alternatives');
 
     this.elCoachCard = document.getElementById('coach-card');
     this.elCoachState = document.getElementById('coach-state');
@@ -276,8 +286,9 @@ class ChessReviewApp {
 	      }
 	    });
 	    this.elBtnCoachSetupStart?.addEventListener('click', () => this._startCoachFromSetup());
-    this.elBtnReview.addEventListener('click', () => this._startReview());
-    this.elBtnReset.addEventListener('click', () => this._resetGame());
+	    this.elBtnReview.addEventListener('click', () => this._startReview());
+	    this.elBtnLineExplorer?.addEventListener('click', () => this._exploreBestLineFromCurrentMove());
+	    this.elBtnReset.addEventListener('click', () => this._resetGame());
     this.elEngineSource.addEventListener('change', () => this._handleEngineSourceChange());
 	    this.elEngineModule.addEventListener('change', () => this._handleEngineModuleChange());
     this.elEngineStrength.addEventListener('change', () => this._handleEngineStrengthChange());
@@ -679,16 +690,17 @@ class ChessReviewApp {
     this._goToMove(target >= -1 ? target : -1);
   }
 
-  _invalidateAnalysisResults(options = {}) {
+	  _invalidateAnalysisResults(options = {}) {
     const { skipBoardRefresh = false } = options;
     if (!this.analysisResults) return;
 
 	    this.analysisResults = null;
 	    if (this.elReviewBtnText) this.elReviewBtnText.textContent = 'Start Review';
 	    this.elReviewSummary.style.display = 'none';
-    this.elMoveBadge.style.display = 'none';
-    this.elCriticalMoments.style.display = 'none';
-    this.elCriticalList.innerHTML = '';
+	    this.elMoveBadge.style.display = 'none';
+		    this.elCriticalMoments.style.display = 'none';
+		    this.elCriticalList.innerHTML = '';
+		    this._clearReviewExtras();
     this._resetInsightPanel();
     this.liveEvalHistory = [];
     this._updateLiveEvalPanel({
@@ -844,6 +856,13 @@ class ChessReviewApp {
 	    }
 	    this.elCoachSetupModal.style.display = 'flex';
 	    this.elCoachSetupElo?.focus();
+	  }
+
+	  _clearReviewExtras() {
+	    if (this.elReviewNarrative) this.elReviewNarrative.innerHTML = '';
+	    if (this.elTrainingList) this.elTrainingList.innerHTML = '';
+	    if (this.elOpeningDrift) this.elOpeningDrift.innerHTML = '';
+	    if (this.elPatternList) this.elPatternList.innerHTML = '';
 	  }
 
   _hideCoachSetupModal() {
@@ -1872,6 +1891,7 @@ class ChessReviewApp {
 	    const playerRating = this.coachMode.active
 	      ? this.coachMode.elo
 	      : this.analyzer._ratingForColor(this.gameHeaders, isWhitePlaying);
+	    const timeControl = this.gameHeaders?.TimeControl || this.gameHeaders?.Time || '';
 	    const expectedLoss = this.analyzer.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
 		    const classification = this.analyzer.classifyMove({
 	      movePly,
@@ -1890,20 +1910,32 @@ class ChessReviewApp {
 	      scoreAfter,
 		      phase,
 		      playerRating,
+		      timeControl,
 		      opponentJustBlundered,
 		    });
 
-    const alternatives = lines.slice(0, this._getReviewProfile().multiPv).map((line, idx) => ({
-      rank: idx + 1,
+	    const alternatives = lines.slice(0, this._getReviewProfile().multiPv).map((line, idx) => ({
+	      rank: idx + 1,
       moveUci: line.move,
       moveSan: this.analyzer.uciToSan(fenBefore, line.move),
       eval: line.cp,
       evalText: this.analyzer.formatScore(line.cp),
       pvSan: line.pvSan,
     }));
-
-    const classificationKey = this.analyzer.getClassificationKey(classification);
-    const result = {
+	
+	    const classificationKey = this.analyzer.getClassificationKey(classification);
+	    const mateThreat = this.analyzer._mateThreat(fenAfter);
+	    const planTags = this.analyzer._planTags({
+	      fenBefore,
+	      fenAfter,
+	      moveObj,
+	      phase,
+	      classificationKey,
+	      playerEdgeBefore,
+	      playerEdgeAfter,
+	    });
+	    const endgameNotes = this.analyzer._endgameNotes(fenBefore, fenAfter, moveObj, phase);
+	    const result = {
       move: moveObj.san,
       moveSan: moveObj.san,
       moveUci: playedUci,
@@ -1918,6 +1950,8 @@ class ChessReviewApp {
 	      cpLoss,
 	      expectedLoss,
 	      playerRating,
+	      playerEdgeBefore,
+	      playerEdgeAfter,
 	      bestMove,
       bestMoveSan,
       opponentBestMove,
@@ -1926,9 +1960,12 @@ class ChessReviewApp {
       bestMovePvSan: '',
       alternatives,
       depth,
-      fen: fenBefore,
-      fenAfter,
+	      fen: fenBefore,
+	      fenAfter,
 	      phase,
+	      planTags,
+	      mateThreat,
+	      endgameNotes,
 	      isCriticalMoment: expectedLoss >= 0.08 || cpLoss >= 120 || classificationKey === 'MISS' || classificationKey === 'BLUNDER',
 	      severityScore: (expectedLoss * 2.2) + (cpLoss / 150) + (classificationKey === 'BLUNDER' ? 1.2 : classificationKey === 'MISTAKE' ? 0.9 : 0.2),
 	      opponentJustBlundered,
@@ -2125,10 +2162,11 @@ class ChessReviewApp {
     this.board.setHighlights([]);
     this.board.clearBestMoveArrow();
 
-    this.elReviewSummary.style.display = 'none';
-    this.elMoveBadge.style.display = 'none';
-    this.elCriticalMoments.style.display = 'none';
-    this.elCriticalList.innerHTML = '';
+	    this.elReviewSummary.style.display = 'none';
+	    this.elMoveBadge.style.display = 'none';
+	    this.elCriticalMoments.style.display = 'none';
+	    this.elCriticalList.innerHTML = '';
+	    this._clearReviewExtras();
     this._resetInsightPanel();
     this._renderMoveList();
 	    this._updateBoard();
@@ -2816,8 +2854,12 @@ class ChessReviewApp {
       ...entry,
       classification: MoveClassification[entry.classificationKey] || MoveClassification.GOOD,
     }));
-    results.opening = data.opening || this.analyzer.detectOpening(this.gameMoves);
-    results.criticalMoments = (data.criticalMoments || []).map((entry) => ({
+	    results.opening = data.opening || this.analyzer.detectOpening(this.gameMoves);
+	    results.openingDrift = data.openingDrift || null;
+	    results.trainingQueue = data.trainingQueue || [];
+	    results.patternStats = data.patternStats || [];
+	    results.reviewNarrative = data.reviewNarrative || [];
+	    results.criticalMoments = (data.criticalMoments || []).map((entry) => ({
       ...entry,
       classification: MoveClassification[entry.classificationKey] || MoveClassification.GOOD,
     }));
@@ -2878,10 +2920,77 @@ class ChessReviewApp {
     this.elCapsWhite.textContent = Math.round(this.analysisResults.whiteCaps ?? this.analyzer.calculateCapsScore(this.analysisResults, 'white'));
     this.elCapsBlack.textContent = Math.round(this.analysisResults.blackCaps ?? this.analyzer.calculateCapsScore(this.analysisResults, 'black'));
     this.elAcplWhite.textContent = Math.round(this.analysisResults.whiteAcpl ?? this.analyzer.calculateAcpl(this.analysisResults, 'white'));
-    this.elAcplBlack.textContent = Math.round(this.analysisResults.blackAcpl ?? this.analyzer.calculateAcpl(this.analysisResults, 'black'));
+	    this.elAcplBlack.textContent = Math.round(this.analysisResults.blackAcpl ?? this.analyzer.calculateAcpl(this.analysisResults, 'black'));
+	
+	    this._renderReviewNarrative();
+	    this._renderTrainingQueue();
+	    this._renderOpeningDrift();
+	    this._renderPatternStats();
+	    this._renderPhaseBreakdown();
+	  }
 
-    this._renderPhaseBreakdown();
-  }
+	  _renderReviewNarrative() {
+	    if (!this.elReviewNarrative) return;
+	    const lines = this.analysisResults?.reviewNarrative || [];
+	    this.elReviewNarrative.innerHTML = lines.length
+	      ? lines.map((line) => `<p>${line}</p>`).join('')
+	      : '<p>Run review to see the main story of the game.</p>';
+	  }
+
+	  _renderTrainingQueue() {
+	    if (!this.elTrainingList) return;
+	    const items = this.analysisResults?.trainingQueue || [];
+	    if (items.length === 0) {
+	      this.elTrainingList.innerHTML = '<div class="empty-mini">No major retry positions found.</div>';
+	      return;
+	    }
+	    this.elTrainingList.innerHTML = '';
+	    items.slice(0, 6).forEach((item, index) => {
+	      const button = document.createElement('button');
+	      button.className = 'training-item';
+	      button.type = 'button';
+	      button.innerHTML = `
+	        <span class="training-index">${index + 1}</span>
+	        <span class="training-copy">
+	          <strong>${item.prompt}</strong>
+	          <small>Solution: ${item.solution || 'review best move'}</small>
+	        </span>
+	      `;
+	      button.addEventListener('click', () => this._goToMove(item.moveIndex));
+	      this.elTrainingList.appendChild(button);
+	    });
+	  }
+
+	  _renderOpeningDrift() {
+	    if (!this.elOpeningDrift) return;
+	    const drift = this.analysisResults?.openingDrift;
+	    if (!drift) {
+	      this.elOpeningDrift.innerHTML = '<div class="empty-mini">No clear book drift detected.</div>';
+	      return;
+	    }
+	    this.elOpeningDrift.innerHTML = `
+	      <button class="drift-card" type="button">
+	        <strong>${drift.moveLabel}</strong>
+	        <span>${drift.text}</span>
+	      </button>
+	    `;
+	    this.elOpeningDrift.querySelector('button')?.addEventListener('click', () => this._goToMove(drift.moveIndex));
+	  }
+
+	  _renderPatternStats() {
+	    if (!this.elPatternList) return;
+	    const patterns = this.analysisResults?.patternStats || [];
+	    if (patterns.length === 0) {
+	      this.elPatternList.innerHTML = '<div class="empty-mini">No recurring mistake pattern found.</div>';
+	      return;
+	    }
+	    this.elPatternList.innerHTML = patterns.map((pattern) => `
+	      <div class="pattern-item">
+	        <span>${pattern.text}</span>
+	        <strong>${pattern.count}x</strong>
+	      </div>
+	    `).join('');
+	  }
 
   _renderPhaseBreakdown() {
     const phaseSummary = this.analysisResults?.phaseSummary;
@@ -2971,11 +3080,17 @@ class ChessReviewApp {
     this.elInsightClass.textContent = '';
     this.elInsightCpLoss.textContent = '0';
     this.elInsightSwing.textContent = '0.0';
-    this.elInsightBestMove.textContent = '--';
-    this.elInsightPhase.textContent = '--';
-    this.elInsightCoach.textContent = '';
-    this.elInsightAlternatives.innerHTML = '';
-  }
+	    this.elInsightBestMove.textContent = '--';
+	    this.elInsightPhase.textContent = '--';
+	    if (this.elInsightPlanTags) this.elInsightPlanTags.innerHTML = '';
+	    if (this.elInsightThreatRow) this.elInsightThreatRow.hidden = true;
+	    if (this.elInsightThreat) this.elInsightThreat.textContent = '--';
+	    if (this.elInsightEndgameRow) this.elInsightEndgameRow.hidden = true;
+	    if (this.elInsightEndgame) this.elInsightEndgame.textContent = '--';
+	    this.elInsightCoach.textContent = '';
+	    if (this.elBtnLineExplorer) this.elBtnLineExplorer.disabled = true;
+	    this.elInsightAlternatives.innerHTML = '';
+	  }
 
   _renderMoveInsights(result) {
     if (!result) {
@@ -2997,9 +3112,28 @@ class ChessReviewApp {
 
     this.elInsightCpLoss.textContent = Math.round(result.cpLoss || 0) + ' cp';
     this.elInsightSwing.textContent = this.analyzer.formatScore(result.swing || 0);
-    this.elInsightBestMove.textContent = result.bestMoveSan || '--';
-    this.elInsightPhase.textContent = result.phase || '--';
-    this.elInsightCoach.textContent = result.coachText || '';
+	    this.elInsightBestMove.textContent = result.bestMoveSan || '--';
+	    this.elInsightPhase.textContent = result.phase || '--';
+	    this.elInsightCoach.textContent = result.coachText || '';
+	    if (this.elInsightPlanTags) {
+	      const tags = result.planTags || [];
+	      this.elInsightPlanTags.innerHTML = tags.length
+	        ? tags.map((tag) => `<span class="insight-tag">${tag}</span>`).join('')
+	        : '<span class="empty-mini">None</span>';
+	    }
+	    if (this.elInsightThreatRow && this.elInsightThreat) {
+	      this.elInsightThreatRow.hidden = !result.mateThreat;
+	      this.elInsightThreat.textContent = result.mateThreat?.text || '--';
+	    }
+	    if (this.elInsightEndgameRow && this.elInsightEndgame) {
+	      const notes = result.endgameNotes || [];
+	      this.elInsightEndgameRow.hidden = notes.length === 0;
+	      this.elInsightEndgame.textContent = notes.join(' ');
+	    }
+	    if (this.elBtnLineExplorer) {
+	      this.elBtnLineExplorer.disabled = !result.bestMove || result.bestMove === result.moveUci;
+	      this.elBtnLineExplorer.dataset.moveIndex = String(result.moveIndex);
+	    }
 
     if (!result.alternatives || result.alternatives.length === 0) {
       this.elInsightAlternatives.innerHTML = '';
@@ -3014,10 +3148,57 @@ class ChessReviewApp {
       </div>
     `).join('');
 
-    this.elInsightAlternatives.innerHTML = `<div class="alt-title">Top Engine Lines</div>${rows}`;
-  }
+	    this.elInsightAlternatives.innerHTML = `<div class="alt-title">Top Engine Lines</div>${rows}`;
+	  }
 
-  _toggleAutoPlay() {
+	  async _exploreBestLineFromCurrentMove() {
+	    const index = Number(this.elBtnLineExplorer?.dataset.moveIndex ?? this.currentMoveIndex);
+	    const result = this.analysisResults?.[index] || this.liveMoveResults?.[index];
+	    if (!result?.bestMove || result.bestMove === result.moveUci || !result.fen) return;
+
+	    const branch = new Chess(result.fen);
+	    const move = branch.move({
+	      from: result.bestMove.slice(0, 2),
+	      to: result.bestMove.slice(2, 4),
+	      promotion: result.bestMove[4],
+	    });
+	    if (!move) return;
+
+	    const prefix = this.gameMoves.slice(0, Math.max(0, index));
+	    this.gameMoves = [...prefix, move.san];
+	    this.originalGameMoves = this.gameMoves.slice();
+	    this.chess = new Chess(this.initialFen);
+	    for (const san of this.gameMoves) this.chess.move(san, { sloppy: true });
+	    this.currentMoveIndex = this.gameMoves.length - 1;
+	    this.analysisResults = null;
+	    this.liveMoveResults = [];
+	    this.liveEvalHistory = [];
+	    if (this.elReviewBtnText) this.elReviewBtnText.textContent = 'Start Review';
+	    this.elReviewSummary.style.display = 'none';
+	    this.elCriticalMoments.style.display = 'none';
+	    this.elCriticalList.innerHTML = '';
+	    this._clearReviewExtras();
+	    this._setCoachDialog('Best-line explorer loaded. Play your next move and the coach will answer.', 'Explorer');
+	    this.coachMode.active = true;
+	    this.coachMode.humanColor = this.chess.turn();
+	    this.coachMode.thinking = false;
+	    this._syncCoachVisibility();
+	    this._syncCoachControls();
+	    this.board.setChessInstance(this.chess);
+	    this._updateBoard();
+	    this._renderMoveList();
+	    this._updateCurrentMoveIndicator();
+	    this._updateGameStatus();
+	    this.board.setHighlights([{ square: move.from, type: 'best-from' }, { square: move.to, type: 'best-to' }]);
+	    this._requestLiveEvaluation(`Exploring ${move.san}`, {
+	      fenBefore: result.fen,
+	      fenAfter: this.chess.fen(),
+	      moveObj: move,
+	      moveIndex: this.currentMoveIndex,
+	    });
+	  }
+
+	  _toggleAutoPlay() {
     if (this.autoPlaying) {
       this.autoPlaying = false;
       this._setButtonLabel(this.elBtnAuto, 'Auto');

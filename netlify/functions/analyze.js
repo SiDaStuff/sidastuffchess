@@ -61,9 +61,13 @@ exports.handler = async (event) => {
     }));
 
     return json(200, {
-      results: plainResults,
-      opening: results.opening,
-      criticalMoments,
+	      results: plainResults,
+	      opening: results.opening,
+	      openingDrift: results.openingDrift,
+	      trainingQueue: results.trainingQueue,
+	      patternStats: results.patternStats,
+	      reviewNarrative: results.reviewNarrative,
+	      criticalMoments,
       whiteAccuracy: results.whiteAccuracy,
       blackAccuracy: results.blackAccuracy,
       whiteAcpl: results.whiteAcpl,

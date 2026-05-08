@@ -437,6 +437,17 @@ class MoveAnalyzer {
 	    return Number.isFinite(rating) ? clamp(rating, 100, 2800) : 1200;
 	  }
 
+	  _reviewTolerance(playerRating = 1200, timeControl = '') {
+	    const rating = clamp(Number(playerRating) || 1200, 100, 2800);
+	    let tolerance = rating < 800 ? 1.35 : rating < 1200 ? 1.18 : rating > 2000 ? 0.9 : 1;
+	    const tc = String(timeControl || '').toLowerCase();
+	    const baseSeconds = parseInt(tc.split('+')[0], 10);
+	    if (tc.includes('bullet') || (Number.isFinite(baseSeconds) && baseSeconds > 0 && baseSeconds <= 180)) tolerance += 0.22;
+	    else if (tc.includes('blitz') || (Number.isFinite(baseSeconds) && baseSeconds <= 300)) tolerance += 0.12;
+	    else if (tc.includes('classical') || (Number.isFinite(baseSeconds) && baseSeconds >= 1800)) tolerance -= 0.06;
+	    return clamp(tolerance, 0.82, 1.55);
+	  }
+
   getClassificationKey(classificationObj) {
     for (const key of CLASSIFICATION_ORDER) {
       if (classificationObj === MoveClassification[key]) return key;
@@ -490,8 +501,8 @@ class MoveAnalyzer {
     return Math.max(0, secondScore - bestScore);
   }
 
-  _pieceName(pieceType) {
-    const names = {
+	  _pieceName(pieceType) {
+	    const names = {
       p: 'pawn',
       n: 'knight',
       b: 'bishop',
@@ -499,8 +510,12 @@ class MoveAnalyzer {
       q: 'queen',
       k: 'king',
     };
-    return names[pieceType] || 'piece';
-  }
+	    return names[pieceType] || 'piece';
+	  }
+
+	  _isBackRank(square, color) {
+	    return !!square && square[1] === (color === 'w' ? '1' : '8');
+	  }
 
   _describeBestMove(fen, bestMoveUci, bestMoveSan) {
     if (!fen || !bestMoveUci || bestMoveUci.length < 4) {
@@ -597,10 +612,12 @@ class MoveAnalyzer {
 		      scoreAfter,
 		      phase,
 		      playerRating = 1200,
+		      timeControl = '',
 		      opponentJustBlundered,
 		    } = moveData;
 		    const opponentMateAfter = this._opponentImmediateMateAfter(fenBefore, moveSan);
 		    const expectedLoss = this.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
+		    const tolerance = this._reviewTolerance(playerRating, timeControl);
 		    const nearlyBest = isBestMove || cpLoss <= 18 || expectedLoss <= 0.012;
 		    const positionAfterOk = playerEdgeAfter > -120 && this.expectedPoints(playerEdgeAfter, playerRating) >= 0.38;
 		    const wasAlreadyCrushing = playerEdgeBefore >= 900 && !opponentJustBlundered;
@@ -663,9 +680,9 @@ class MoveAnalyzer {
 	      isCheckmate,
 	    });
 
-	    if (expectedLoss > 0.20 || effectiveCpLoss >= 320) return MoveClassification.BLUNDER;
-	    if (expectedLoss > 0.10 || effectiveCpLoss >= 155) return MoveClassification.MISTAKE;
-	    if (expectedLoss > 0.05 || effectiveCpLoss >= 70) return MoveClassification.INACCURACY;
+	    if (expectedLoss > 0.20 * tolerance || effectiveCpLoss >= 320 * tolerance) return MoveClassification.BLUNDER;
+	    if (expectedLoss > 0.10 * tolerance || effectiveCpLoss >= 155 * tolerance) return MoveClassification.MISTAKE;
+	    if (expectedLoss > 0.05 * tolerance || effectiveCpLoss >= 70 * tolerance) return MoveClassification.INACCURACY;
 
     const wasCloseGame = Math.abs(scoreBefore) < 120;
     const stillClose = Math.abs(scoreAfter) < 140;
@@ -820,9 +837,9 @@ class MoveAnalyzer {
     return { isSacrifice: false, isPieceSacrifice: false };
   }
 
-  _phaseFromFen(fen, movePly) {
-    if (movePly <= this.bookPly) return 'Opening';
-    const chess = new Chess(fen);
+	  _phaseFromFen(fen, movePly) {
+	    if (movePly <= this.bookPly) return 'Opening';
+	    const chess = new Chess(fen);
     const board = chess.board();
 
     let nonPawnMaterial = 0;
@@ -837,9 +854,206 @@ class MoveAnalyzer {
       }
     }
 
-    if (pieces <= 10 || nonPawnMaterial <= 14) return 'Endgame';
-    return 'Middlegame';
-  }
+	    if (pieces <= 10 || nonPawnMaterial <= 14) return 'Endgame';
+	    return 'Middlegame';
+	  }
+
+	  _kingSquare(fen, color) {
+	    const chess = new Chess(fen);
+	    for (const file of 'abcdefgh') {
+	      for (const rank of '12345678') {
+	        const square = file + rank;
+	        const piece = chess.get(square);
+	        if (piece && piece.type === 'k' && piece.color === color) return square;
+	      }
+	    }
+	    return '';
+	  }
+
+	  _squareDistance(a, b) {
+	    if (!a || !b) return 99;
+	    return Math.max(Math.abs(a.charCodeAt(0) - b.charCodeAt(0)), Math.abs(Number(a[1]) - Number(b[1])));
+	  }
+
+	  _isPassedPawn(fen, square, color) {
+	    const chess = new Chess(fen);
+	    const file = square.charCodeAt(0);
+	    const rank = Number(square[1]);
+	    const dir = color === 'w' ? 1 : -1;
+	    for (let df = -1; df <= 1; df += 1) {
+	      const f = String.fromCharCode(file + df);
+	      if (f < 'a' || f > 'h') continue;
+	      for (let r = rank + dir; r >= 1 && r <= 8; r += dir) {
+	        const piece = chess.get(f + r);
+	        if (piece && piece.type === 'p' && piece.color !== color) return false;
+	      }
+	    }
+	    return true;
+	  }
+
+	  _oppositionNote(fen) {
+	    const side = fen.split(' ')[1];
+	    const whiteKing = this._kingSquare(fen, 'w');
+	    const blackKing = this._kingSquare(fen, 'b');
+	    if (!whiteKing || !blackKing) return '';
+	    const sameFile = whiteKing[0] === blackKing[0];
+	    const sameRank = whiteKing[1] === blackKing[1];
+	    const distance = this._squareDistance(whiteKing, blackKing);
+	    if ((sameFile || sameRank) && distance === 2) {
+	      return side === 'w' ? 'Black has the opposition.' : 'White has the opposition.';
+	    }
+	    return '';
+	  }
+
+	  _endgameNotes(fenBefore, fenAfter, moveObj, phase) {
+	    if (phase !== 'Endgame' || !moveObj) return [];
+	    const notes = [];
+	    const center = ['d4', 'e4', 'd5', 'e5'];
+	    const ownKingBefore = this._kingSquare(fenBefore, moveObj.color);
+	    if (moveObj.piece === 'k') {
+	      const beforeDist = Math.min(...center.map((sq) => this._squareDistance(ownKingBefore, sq)));
+	      const afterDist = Math.min(...center.map((sq) => this._squareDistance(moveObj.to, sq)));
+	      notes.push(afterDist < beforeDist ? 'King activity improved.' : 'Check whether the king can be more active.');
+	    }
+	    if (moveObj.piece === 'p' && this._isPassedPawn(fenAfter, moveObj.to, moveObj.color)) {
+	      notes.push(`The pawn on ${moveObj.to} is passed.`);
+	    }
+	    if (moveObj.piece === 'r') {
+	      const board = new Chess(fenAfter);
+	      for (const rank of '12345678') {
+	        const sq = moveObj.to[0] + rank;
+	        const piece = board.get(sq);
+	        if (piece && piece.type === 'p' && this._isPassedPawn(fenAfter, sq, piece.color)) {
+	          notes.push('Rook placement matters here: rooks belong behind passed pawns.');
+	          break;
+	        }
+	      }
+	    }
+	    const opposition = this._oppositionNote(fenAfter);
+	    if (opposition) notes.push(opposition);
+	    return notes.slice(0, 2);
+	  }
+
+	  _planTags({ fenBefore, fenAfter, moveObj, phase, classificationKey, playerEdgeBefore, playerEdgeAfter }) {
+	    if (!moveObj) return [];
+	    const tags = [];
+	    const before = new Chess(fenBefore);
+	    if (before.in_check()) tags.push('Defense');
+	    if (/[+#]/.test(moveObj.san || '') || classificationKey === 'BRILLIANT' || classificationKey === 'GREAT') tags.push('Attack');
+	    if (moveObj.piece !== 'p' && moveObj.piece !== 'k' && this._isBackRank(moveObj.from, moveObj.color)) tags.push('Development');
+	    if (moveObj.flags?.includes('k') || moveObj.flags?.includes('q')) tags.push('King safety');
+	    if (moveObj.captured) tags.push('Trade');
+	    if (moveObj.piece === 'p') {
+	      const fileChanged = moveObj.from[0] !== moveObj.to[0];
+	      const rank = Number(moveObj.to[1]);
+	      const adjacentEnemyPawn = [-1, 1].some((df) => {
+	        const file = String.fromCharCode(moveObj.to.charCodeAt(0) + df);
+	        if (file < 'a' || file > 'h') return false;
+	        const piece = before.get(file + rank);
+	        return piece && piece.type === 'p' && piece.color !== moveObj.color;
+	      });
+	      if (fileChanged || adjacentEnemyPawn) tags.push('Pawn break');
+	    }
+	    if (phase === 'Endgame') tags.push('Endgame');
+	    if (playerEdgeBefore >= 250 && playerEdgeAfter >= 180) tags.push('Conversion');
+	    return [...new Set(tags)].slice(0, 4);
+	  }
+
+	  _mateThreat(fenAfter) {
+	    const mateInOne = this._immediateMateMove(fenAfter);
+	    if (mateInOne) return { in: 1, moveSan: mateInOne.san, text: `Opponent has mate in 1: ${mateInOne.san}` };
+	    const board = new Chess(fenAfter);
+	    const attackingMoves = board.moves({ verbose: true }).slice(0, 48);
+	    for (const attack of attackingMoves) {
+	      const playedAttack = board.move(attack.san);
+	      if (!playedAttack) continue;
+	      const replies = board.moves({ verbose: true });
+	      let forced = replies.length > 0;
+	      for (const reply of replies.slice(0, 48)) {
+	        const playedReply = board.move(reply.san);
+	        const mateNext = playedReply ? this._immediateMateMove(board.fen()) : null;
+	        if (playedReply) board.undo();
+	        if (!mateNext) {
+	          forced = false;
+	          break;
+	        }
+	      }
+	      board.undo();
+	      if (forced) return { in: 2, moveSan: attack.san, text: `Opponent has a forced mate threat: ${attack.san}` };
+	    }
+	    return null;
+	  }
+
+	  _openingPlan(opening) {
+	    const name = String(opening?.name || '').toLowerCase();
+	    if (name.includes('ruy lopez')) return 'Keep central tension, castle, and prepare c3/d4 before launching flank play.';
+	    if (name.includes('sicilian')) return 'Fight for d4, finish development, and watch queenside/central breaks.';
+	    if (name.includes('french')) return 'Resolve the light-squared bishop, attack the pawn chain, and time c5/f6 breaks.';
+	    if (name.includes('caro')) return 'Develop the light bishop cleanly, challenge the center, and avoid passive piece placement.';
+	    if (name.includes('london')) return 'Build the e3/c3/Nf3 structure, keep the dark bishop active, and choose a central break.';
+	    if (name.includes('italian')) return 'Castle, develop smoothly, and decide between c3/d4 center play or kingside pressure.';
+	    if (name.includes('queen')) return 'Develop pieces before pawn grabbing, contest the center, and coordinate rooks.';
+	    return 'Develop pieces, castle, and connect moves to a clear central plan.';
+	  }
+
+	  _openingDrift(moves, opening) {
+	    if (!opening) return null;
+	    const driftPly = Math.min((opening.ply || 0) + 1, moves.length);
+	    if (driftPly <= 0 || driftPly > moves.length) return null;
+	    const moveNumber = Math.floor((driftPly - 1) / 2) + 1;
+	    return {
+	      moveIndex: driftPly - 1,
+	      moveLabel: `${moveNumber}${driftPly % 2 === 1 ? '.' : '...'} ${moves[driftPly - 1]}`,
+	      text: `Left book after ${opening.name}${opening.eco ? ` (${opening.eco})` : ''}. ${this._openingPlan(opening)}`,
+	    };
+	  }
+
+	  _trainingQueue(results) {
+	    return results
+	      .filter((move) => ['MISS', 'BLUNDER', 'MISTAKE'].includes(move.classificationKey) && !move.isCoachMove)
+	      .sort((a, b) => b.severityScore - a.severityScore)
+	      .slice(0, 10)
+	      .map((move) => ({
+	        moveIndex: move.moveIndex,
+	        fen: move.fen,
+	        prompt: `Find a better move than ${move.moveSan}.`,
+	        solution: move.bestMoveSan || '',
+	        reason: move.coachText || '',
+	      }));
+	  }
+
+	  _patternStats(results) {
+	    const patterns = new Map();
+	    const add = (key, text) => patterns.set(key, { text, count: (patterns.get(key)?.count || 0) + 1 });
+	    for (const move of results) {
+	      if (!['INACCURACY', 'MISTAKE', 'BLUNDER', 'MISS'].includes(move.classificationKey)) continue;
+	      if (move.mateThreat) add('mate-threats', 'You often allow direct mate threats.');
+	      if ((move.planTags || []).includes('Trade') && move.playerEdgeBefore > 180) add('trading-up', 'You sometimes trade while already attacking or converting.');
+	      if ((move.planTags || []).includes('Development') && move.movePly > 16) add('late-development', 'Development problems are lasting past the opening.');
+	      if ((move.planTags || []).includes('Pawn break')) add('pawn-breaks', 'Pawn breaks need more calculation before release.');
+	      if (move.phase === 'Endgame') add('endgame', 'Endgame technique is costing practical chances.');
+	      if (/queen/i.test(move.coachText || '')) add('queen-safety', 'Queen safety is a recurring tactical issue.');
+	    }
+	    return [...patterns.values()].sort((a, b) => b.count - a.count).slice(0, 5);
+	  }
+
+	  _reviewNarrative(results, headers = {}) {
+	    if (!results.length) return [];
+	    const whiteBad = results.filter((m) => m.isWhite && ['MISS', 'BLUNDER', 'MISTAKE'].includes(m.classificationKey));
+	    const blackBad = results.filter((m) => !m.isWhite && ['MISS', 'BLUNDER', 'MISTAKE'].includes(m.classificationKey));
+	    const whiteName = headers.White || 'White';
+	    const blackName = headers.Black || 'Black';
+	    const result = headers.Result || '';
+	    const title = result === '1-0' ? `${whiteName} won because` : result === '0-1' ? `${blackName} won because` : 'The game turned because';
+	    const betterSide = whiteBad.length <= blackBad.length ? whiteName : blackName;
+	    const worsePatterns = this._patternStats(results).slice(0, 2).map((p) => p.text.toLowerCase());
+	    const critical = results.filter((m) => m.isCriticalMoment).length;
+	    return [
+	      `${title} ${betterSide} made fewer severe errors in the critical positions.`,
+	      critical > 0 ? `${critical} critical moments shaped the result, with misses and blunders carrying the largest swings.` : 'The game was decided more by steady move quality than by one obvious collapse.',
+	      worsePatterns.length > 0 ? `Recurring themes: ${worsePatterns.join(' ')}.` : 'Recurring themes: conversion, king safety, and clean development.',
+	    ];
+	  }
 
   _coachingText(payload) {
     const coachText = this.coach?.explain(payload);
@@ -1059,9 +1273,11 @@ class MoveAnalyzer {
 	      const playerEdgeBefore = isWhitePlaying ? scoreBefore : -scoreBefore;
 	      const playerEdgeAfter = isWhitePlaying ? scoreAfter : -scoreAfter;
 	      const playerRating = this._ratingForColor(options.headers, isWhitePlaying);
+	      const timeControl = options.headers?.TimeControl || options.headers?.Time || '';
 	      const expectedLoss = this.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
 	      const isBestMove = movePlayedUci === bestMove;
 	      const opponentJustBlundered = i > 0 && results[i - 1].classificationKey === 'BLUNDER';
+	      const mateThreat = this._mateThreat(fenAfter);
 
       const classification = this.classifyMove({
         movePly,
@@ -1080,6 +1296,7 @@ class MoveAnalyzer {
 		        scoreAfter,
 		        phase,
 		        playerRating,
+		        timeControl,
 		        opponentJustBlundered,
 		      });
 
@@ -1092,8 +1309,18 @@ class MoveAnalyzer {
         pvSan: line.pvSan,
       }));
 
-      const classificationKey = this.getClassificationKey(classification);
-      const severityScoreMap = {
+	      const classificationKey = this.getClassificationKey(classification);
+	      const planTags = this._planTags({
+	        fenBefore: fen,
+	        fenAfter,
+	        moveObj,
+	        phase,
+	        classificationKey,
+	        playerEdgeBefore,
+	        playerEdgeAfter,
+	      });
+	      const endgameNotes = this._endgameNotes(fen, fenAfter, moveObj, phase);
+	      const severityScoreMap = {
         BRILLIANT: 1,
         GREAT: 0.8,
         BEST: 0.3,
@@ -1126,17 +1353,22 @@ class MoveAnalyzer {
 	        cpLoss,
 	        expectedLoss,
 	        playerRating,
+	        playerEdgeBefore,
+	        playerEdgeAfter,
 	        bestMove,
         bestMoveSan,
         opponentBestMove,
         opponentBestMoveSan,
         bestMovePv: evals[i].pv,
         bestMovePvSan: evals[i].pvSan,
-        alternatives,
-        depth: evals[i].depth,
-        fen,
-        fenAfter,
-        phase,
+	        alternatives,
+	        depth: evals[i].depth,
+	        fen,
+	        fenAfter,
+	        phase,
+	        planTags,
+	        mateThreat,
+	        endgameNotes,
 	        isCriticalMoment: expectedLoss >= 0.08 || cpLoss >= 120 || classificationKey === 'MISS' || classificationKey === 'BLUNDER',
         severityScore,
         opponentJustBlundered,
@@ -1161,8 +1393,12 @@ class MoveAnalyzer {
       });
     }
 
-    results.opening = opening;
-    results.criticalMoments = this.getCriticalMoments(results, 8);
+	    results.opening = opening;
+	    results.openingDrift = this._openingDrift(moves, opening);
+	    results.trainingQueue = this._trainingQueue(results);
+	    results.patternStats = this._patternStats(results);
+	    results.reviewNarrative = this._reviewNarrative(results, options.headers || {});
+	    results.criticalMoments = this.getCriticalMoments(results, 8);
     results.whiteAccuracy = this.calculateAccuracy(results, 'white');
     results.blackAccuracy = this.calculateAccuracy(results, 'black');
     results.whiteAcpl = this.calculateAcpl(results, 'white');
