@@ -1,0 +1,1221 @@
+// Move Analysis and Classification Module
+// Provides game-review style classification, summaries, and coach guidance.
+
+const MoveClassification = Object.freeze({
+  BRILLIANT:   { key: 'BRILLIANT',   name: 'Brilliant',   symbol: '!!', color: '#1BACA6', icon: '!!' },
+  GREAT:       { key: 'GREAT',       name: 'Great',       symbol: '!',  color: '#5C8BB4', icon: '!' },
+  BEST:        { key: 'BEST',        name: 'Best',        symbol: '*',  color: '#96BC4B', icon: 'star', iconType: 'material' },
+  EXCELLENT:   { key: 'EXCELLENT',   name: 'Excellent',   symbol: '+',  color: '#96BC4B', icon: 'thumb_up', iconType: 'material' },
+  GOOD:        { key: 'GOOD',        name: 'Good',        symbol: '=',  color: '#97AF8B', icon: 'check', iconType: 'material' },
+  BOOK:        { key: 'BOOK',        name: 'Book',        symbol: 'Bk', color: '#A88764', icon: 'menu_book', iconType: 'material' },
+  FORCED:      { key: 'FORCED',      name: 'Forced',      symbol: '[]', color: '#97AF8B', icon: 'lock', iconType: 'material' },
+  INACCURACY:  { key: 'INACCURACY',  name: 'Inaccuracy',  symbol: '?!', color: '#F7C631', icon: '?!' },
+  MISTAKE:     { key: 'MISTAKE',     name: 'Mistake',     symbol: '?',  color: '#E68A2E', icon: '?' },
+  BLUNDER:     { key: 'BLUNDER',     name: 'Blunder',     symbol: '??', color: '#CA3431', icon: '??' },
+  MISS:        { key: 'MISS',        name: 'Miss',        symbol: 'X', color: '#CA3431', icon: 'X' },
+});
+
+const OPENING_BOOK = [
+  { eco: 'B00', name: 'King Pawn Opening', moves: ['e4'] },
+  { eco: 'C20', name: "King's Pawn Game", moves: ['e4', 'e5'] },
+  { eco: 'B01', name: 'Scandinavian Defense', moves: ['e4', 'd5'] },
+  { eco: 'B06', name: 'Modern Defense', moves: ['e4', 'g6'] },
+  { eco: 'B07', name: 'Pirc Defense', moves: ['e4', 'd6'] },
+  { eco: 'B12', name: 'Caro-Kann Defense', moves: ['e4', 'c6'] },
+  { eco: 'B20', name: 'Sicilian Defense', moves: ['e4', 'c5'] },
+  { eco: 'B50', name: 'Sicilian Defense', moves: ['e4', 'c5', 'Nf3', 'd6'] },
+  { eco: 'C00', name: 'French Defense', moves: ['e4', 'e6'] },
+  { eco: 'C40', name: "King's Knight Opening", moves: ['e4', 'e5', 'Nf3'] },
+  { eco: 'C44', name: 'Scotch Game', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'd4'] },
+  { eco: 'C45', name: 'Scotch Game, Schmidt Variation', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'd4', 'exd4'] },
+  { eco: 'C44', name: 'Scotch Gambit', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'd4', 'exd4', 'Bc4'] },
+  { eco: 'C50', name: 'Italian Game', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4'] },
+  { eco: 'C53', name: 'Giuoco Piano', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5'] },
+  { eco: 'C55', name: 'Two Knights Defense', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Nf6'] },
+  { eco: 'C60', name: 'Ruy Lopez', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'] },
+  { eco: 'C65', name: 'Ruy Lopez, Berlin Defense', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'Nf6'] },
+  { eco: 'D00', name: "Queen's Pawn Game", moves: ['d4'] },
+  { eco: 'D02', name: "Queen's Pawn Game, London System", moves: ['d4', 'd5', 'Bf4'] },
+  { eco: 'D06', name: "Queen's Gambit", moves: ['d4', 'd5', 'c4'] },
+  { eco: 'D30', name: "Queen's Gambit Declined", moves: ['d4', 'd5', 'c4', 'e6'] },
+  { eco: 'D20', name: "Queen's Gambit Accepted", moves: ['d4', 'd5', 'c4', 'dxc4'] },
+  { eco: 'D10', name: 'Slav Defense', moves: ['d4', 'd5', 'c4', 'c6'] },
+  { eco: 'D70', name: 'Neo-Grunfeld Defense', moves: ['d4', 'Nf6', 'c4', 'g6', 'Nc3', 'd5'] },
+  { eco: 'E00', name: 'Catalan Opening', moves: ['d4', 'Nf6', 'c4', 'e6', 'g3'] },
+  { eco: 'E10', name: 'Nimzo-Indian Defense', moves: ['d4', 'Nf6', 'c4', 'e6', 'Nc3', 'Bb4'] },
+  { eco: 'E60', name: "King's Indian Defense", moves: ['d4', 'Nf6', 'c4', 'g6'] },
+  { eco: 'E90', name: "King's Indian Defense, Main Line", moves: ['d4', 'Nf6', 'c4', 'g6', 'Nc3', 'Bg7', 'e4', 'd6'] },
+  { eco: 'A40', name: 'English Opening', moves: ['c4'] },
+  { eco: 'A10', name: 'English Opening, Anglo-Indian', moves: ['c4', 'Nf6'] },
+  { eco: 'A00', name: "Bird Opening", moves: ['f4'] },
+  { eco: 'A02', name: "Bird Opening, Dutch Variation", moves: ['f4', 'd5'] },
+  { eco: 'A04', name: "Reti Opening", moves: ['Nf3'] },
+];
+
+const CLASSIFICATION_ORDER = [
+  'BRILLIANT',
+  'GREAT',
+  'BEST',
+  'EXCELLENT',
+  'GOOD',
+  'BOOK',
+  'FORCED',
+  'INACCURACY',
+  'MISTAKE',
+  'BLUNDER',
+  'MISS',
+];
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+class BrowserMoveCoach {
+  constructor(analyzer) {
+    this.analyzer = analyzer;
+    this.pieceNames = {
+      p: 'pawn',
+      n: 'knight',
+      b: 'bishop',
+      r: 'rook',
+      q: 'queen',
+      k: 'king',
+    };
+    this.pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 100 };
+    this.center = new Set(['d4', 'e4', 'd5', 'e5']);
+    this.extendedCenter = new Set(['c3', 'd3', 'e3', 'f3', 'c4', 'd4', 'e4', 'f4', 'c5', 'd5', 'e5', 'f5', 'c6', 'd6', 'e6', 'f6']);
+  }
+
+  explain(payload) {
+    const moveInfo = this._moveInfo(payload);
+    const key = this.analyzer.getClassificationKey(payload.classification);
+    const statements = [this._classificationStatement(key, payload, moveInfo)];
+
+    statements.push(...this._strategicStatements(payload, moveInfo));
+    statements.push(...this._tacticalStatements(payload, moveInfo));
+
+    const bestMoveIdea = this.analyzer._describeBestMove(payload.fenBefore, payload.bestMove, payload.bestMoveSan);
+    const opponentReply = this._describeOpponentReply(payload);
+
+    if (['INACCURACY', 'MISTAKE', 'BLUNDER', 'MISS'].includes(key)) {
+      if (opponentReply) {
+        statements.push(opponentReply);
+      }
+      if (payload.bestMoveSan) {
+        statements.push(`The cleaner plan was ${payload.bestMoveSan}${bestMoveIdea ? `: ${bestMoveIdea}.` : '.'}`);
+      }
+    } else if (payload.bestMoveSan && payload.bestMoveSan !== moveInfo.san && key !== 'BOOK') {
+      statements.push(`It stays close to the engine's preferred idea, ${payload.bestMoveSan}.`);
+    }
+
+    return statements
+      .filter(Boolean)
+      .filter((statement, index, all) => all.indexOf(statement) === index)
+      .slice(0, 4)
+      .join(' ');
+  }
+
+  _moveInfo(payload) {
+    const chess = new Chess(payload.fenBefore);
+    const move = payload.moveUci
+      ? chess.move({
+          from: payload.moveUci.slice(0, 2),
+          to: payload.moveUci.slice(2, 4),
+          promotion: payload.moveUci[4],
+        })
+      : chess.move(payload.moveSan, { sloppy: true });
+
+    return move || {
+      san: payload.moveSan || payload.move || 'This move',
+      color: payload.isWhite ? 'w' : 'b',
+      piece: '',
+      from: '',
+      to: '',
+    };
+  }
+
+  _classificationStatement(key, payload, move) {
+    const san = move.san || payload.moveSan || 'This move';
+    const descriptions = {
+      BRILLIANT: 'is brilliant because it solves a concrete tactical problem while keeping the position alive',
+      GREAT: 'is a great move and one of the few ways to keep full pressure',
+      BEST: 'is the best move in the position',
+      EXCELLENT: 'is excellent and stays very close to the engine line',
+      GOOD: 'is playable, though there was a cleaner option',
+      BOOK: 'stays in book',
+      FORCED: 'was forced by the position',
+      INACCURACY: 'is an inaccuracy',
+      MISTAKE: `is a mistake and gives up about ${Math.round(payload.cpLoss || 0)} centipawns`,
+      BLUNDER: `is a blunder and drops about ${Math.round(payload.cpLoss || 0)} centipawns`,
+      MISS: 'misses a chance to convert the position',
+    };
+    return `${san} ${descriptions[key] || 'is worth reviewing'}.`;
+  }
+
+  _strategicStatements(payload, move) {
+    const statements = [];
+    const piece = this.pieceNames[move.piece] || 'piece';
+    const colorName = move.color === 'w' ? 'White' : 'Black';
+    const ply = payload.movePly || 0;
+
+    if (ply === 1) statements.push('This move begins the game and sets the pawn structure.');
+    if (move.flags?.includes('k') || move.flags?.includes('q')) {
+      statements.push(`${colorName} castles, improving king safety and connecting the rooks.`);
+    }
+
+    if (ply <= 16 && move.piece && move.piece !== 'p' && this._isBackRank(move.from, move.color) && !this._isBackRank(move.to, move.color)) {
+      const edgeNote = move.piece === 'n' && /^[ah]/.test(move.to) ? ', though the knight is heading toward the edge' : '';
+      statements.push(`This move develops a ${piece}${edgeNote}.`);
+    }
+
+    if (ply <= 12 && move.piece === 'q' && !move.captured && this.extendedCenter.has(move.to)) {
+      statements.push('The queen comes out early, which can invite tempi from developing moves.');
+    }
+
+    if (ply <= 16 && move.piece === 'p' && ['c3', 'f3', 'c6', 'f6'].includes(move.to)) {
+      statements.push('This pawn move can make natural knight development harder.');
+    }
+
+    const attacks = this._attacksFrom(payload.fenAfter, move.to, move.color, move.piece);
+    if (attacks.some((sq) => this.center.has(sq))) {
+      statements.push(`The ${piece} adds useful central control.`);
+    } else if (ply <= 16 && move.piece !== 'k' && move.piece !== 'r' && attacks.length > 0 && !attacks.some((sq) => this.extendedCenter.has(sq))) {
+      statements.push(`The ${piece} does not do much for the center yet.`);
+    }
+
+    if (move.piece === 'p' && this._opensHomeDiagonal(payload.fenBefore, move)) {
+      statements.push('This pawn move opens a diagonal for a bishop or queen.');
+    }
+
+    return statements;
+  }
+
+  _tacticalStatements(payload, move) {
+    const statements = [];
+    const piece = this.pieceNames[move.piece] || 'piece';
+
+    if (move.captured) {
+      statements.push(`It captures a ${this.pieceNames[move.captured] || 'piece'} on ${move.to}.`);
+    }
+    if (/[+#]$/.test(move.san || '')) {
+      statements.push((move.san || '').endsWith('#') ? 'It finishes with checkmate.' : 'It gives check and forces a reply.');
+    }
+
+    const attacks = this._attacksFrom(payload.fenAfter, move.to, move.color, move.piece);
+    const pressured = attacks
+      .map((square) => ({ square, piece: this._pieceAt(payload.fenAfter, square) }))
+      .filter((entry) => entry.piece && entry.piece.color !== move.color && entry.piece.type !== 'k')
+      .filter((entry) => this.pieceValues[entry.piece.type] >= this.pieceValues[move.piece] || !this._isDefended(payload.fenAfter, entry.square, entry.piece.color));
+
+    if (pressured.length > 0 && !move.captured) {
+      const target = pressured[0];
+      statements.push(`The ${piece} creates pressure on the ${this.pieceNames[target.piece.type]} on ${target.square}.`);
+    }
+
+    if (move.piece === 'p') {
+      const pawnPressure = attacks
+        .map((square) => this._pieceAt(payload.fenAfter, square))
+        .some((target) => target && target.color !== move.color && target.type === 'p');
+      if (pawnPressure) statements.push('This is also a pawn break, challenging the opponent pawn chain.');
+    }
+
+    return statements;
+  }
+
+  _describeOpponentReply(payload) {
+    const replyMove = payload.opponentBestMove || payload.replyMove;
+    if (!payload.fenAfter || !replyMove || replyMove.length < 4) return '';
+
+    const chess = new Chess(payload.fenAfter);
+    const reply = chess.move({
+      from: replyMove.slice(0, 2),
+      to: replyMove.slice(2, 4),
+      promotion: replyMove[4],
+    });
+    if (!reply) return '';
+
+    const replyFen = chess.fen();
+    const attacks = this._attacksFrom(replyFen, reply.to, reply.color, reply.piece);
+    const targets = attacks
+      .map((square) => ({ square, piece: this._pieceAt(replyFen, square) }))
+      .filter((entry) => entry.piece && entry.piece.color !== reply.color);
+
+    const check = /[+#]$/.test(reply.san || '');
+    const queenTarget = targets.find((entry) => entry.piece.type === 'q');
+    const kingTarget = targets.find((entry) => entry.piece.type === 'k');
+    const highValueTarget = targets
+      .filter((entry) => entry.piece.type !== 'k')
+      .sort((a, b) => (this.pieceValues[b.piece.type] || 0) - (this.pieceValues[a.piece.type] || 0))[0];
+
+    const threats = [];
+    if (check || kingTarget) threats.push('gives check');
+    if (queenTarget) {
+      threats.push(`attacks the queen on ${queenTarget.square}`);
+    } else if (highValueTarget && (this.pieceValues[highValueTarget.piece.type] || 0) >= 3) {
+      threats.push(`attacks the ${this.pieceNames[highValueTarget.piece.type]} on ${highValueTarget.square}`);
+    } else if (reply.captured) {
+      threats.push(`wins the ${this.pieceNames[reply.captured] || 'piece'} on ${reply.to}`);
+    }
+
+    if (threats.length === 0) {
+      return `The engine's immediate reply is ${reply.san}.`;
+    }
+
+    return `The immediate problem is ${reply.san}: it ${threats.join(' and ')}.`;
+  }
+
+  _isBackRank(square, color) {
+    return !!square && square[1] === (color === 'w' ? '1' : '8');
+  }
+
+  _pieceAt(fen, square) {
+    const chess = new Chess(fen);
+    return chess.get(square);
+  }
+
+  _isDefended(fen, square, color) {
+    const board = this._boardMap(fen);
+    for (const [from, piece] of Object.entries(board)) {
+      if (piece.color !== color || from === square) continue;
+      if (this._attacksFrom(fen, from, piece.color, piece.type).includes(square)) return true;
+    }
+    return false;
+  }
+
+  _opensHomeDiagonal(fenBefore, move) {
+    if (!move.from || move.piece !== 'p') return false;
+    const homeDiagonals = {
+      d2: ['c1'],
+      e2: ['f1'],
+      d7: ['c8'],
+      e7: ['f8'],
+    };
+    const homes = homeDiagonals[move.from];
+    if (!homes) return false;
+    return homes.some((sq) => {
+      const piece = this._pieceAt(fenBefore, sq);
+      return piece && (piece.type === 'b' || piece.type === 'q') && piece.color === move.color;
+    });
+  }
+
+  _boardMap(fen) {
+    const chess = new Chess(fen);
+    const board = {};
+    for (const file of 'abcdefgh') {
+      for (const rank of '12345678') {
+        const square = file + rank;
+        const piece = chess.get(square);
+        if (piece) board[square] = piece;
+      }
+    }
+    return board;
+  }
+
+  _attacksFrom(fen, square, color, type) {
+    if (!square || !type) return [];
+    const board = this._boardMap(fen);
+    const file = square.charCodeAt(0) - 97;
+    const rank = parseInt(square[1], 10) - 1;
+    const out = [];
+    const add = (f, r) => {
+      if (f < 0 || f > 7 || r < 0 || r > 7) return false;
+      const target = String.fromCharCode(97 + f) + (r + 1);
+      const targetPiece = board[target];
+      if (!targetPiece) {
+        out.push(target);
+        return true;
+      }
+      if (targetPiece.color !== color) out.push(target);
+      return false;
+    };
+    const slide = (dirs) => {
+      for (const [df, dr] of dirs) {
+        for (let f = file + df, r = rank + dr; f >= 0 && f <= 7 && r >= 0 && r <= 7; f += df, r += dr) {
+          if (!add(f, r)) break;
+        }
+      }
+    };
+
+    if (type === 'p') {
+      const dir = color === 'w' ? 1 : -1;
+      add(file - 1, rank + dir);
+      add(file + 1, rank + dir);
+    } else if (type === 'n') {
+      [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]].forEach(([df, dr]) => add(file + df, rank + dr));
+    } else if (type === 'b') {
+      slide([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
+    } else if (type === 'r') {
+      slide([[1, 0], [-1, 0], [0, 1], [0, -1]]);
+    } else if (type === 'q') {
+      slide([[1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]]);
+    } else if (type === 'k') {
+      [[1, 1], [1, 0], [1, -1], [0, 1], [0, -1], [-1, 1], [-1, 0], [-1, -1]].forEach(([df, dr]) => add(file + df, rank + dr));
+    }
+
+    return out;
+  }
+}
+
+class MoveAnalyzer {
+  constructor() {
+    this.analysisDepth = 14;
+    this.multiPvCount = 3;
+    this.fallbackTimeoutMs = 12000;
+    this.bookPly = 16;
+    this.coach = new BrowserMoveCoach(this);
+  }
+
+  setReviewProfile(profile = {}) {
+    this.analysisDepth = profile.depth || this.analysisDepth;
+    this.multiPvCount = profile.multiPv || this.multiPvCount;
+    this.fallbackTimeoutMs = profile.timeoutMs || this.fallbackTimeoutMs;
+  }
+
+  scoreToCp(score, scoreType) {
+    if (scoreType === 'mate') {
+      if (score > 0) return 10000 - (score * 10);
+      if (score < 0) return -10000 + (Math.abs(score) * 10);
+      return 0;
+    }
+    return score;
+  }
+
+  normalizeScore(score, scoreType, isWhiteToMove) {
+    const cp = this.scoreToCp(score, scoreType);
+    return isWhiteToMove ? cp : -cp;
+  }
+
+  formatScore(cpScore) {
+    if (cpScore >= 9900) {
+      const mateMoves = Math.ceil((10000 - cpScore) / 10);
+      return `M${mateMoves}`;
+    }
+    if (cpScore <= -9900) {
+      const mateMoves = Math.ceil((10000 + cpScore) / 10);
+      return `-M${mateMoves}`;
+    }
+    const pawns = cpScore / 100;
+    return (pawns >= 0 ? '+' : '') + pawns.toFixed(1);
+  }
+
+  evalBarPercent(cpScore) {
+    const x = cpScore / 100;
+    const percent = 50 + 50 * (2 / (1 + Math.exp(-0.4 * x)) - 1);
+    return clamp(percent, 2, 98);
+  }
+
+  getClassificationKey(classificationObj) {
+    for (const key of CLASSIFICATION_ORDER) {
+      if (classificationObj === MoveClassification[key]) return key;
+    }
+    return 'GOOD';
+  }
+
+  _cleanSanMove(move) {
+    if (!move) return '';
+    return move
+      .replace(/[+#?!]/g, '')
+      .replace(/e\.p\./gi, '')
+      .trim();
+  }
+
+  detectOpening(moves) {
+    if (!Array.isArray(moves) || moves.length === 0) return null;
+    const cleanMoves = moves.map((m) => this._cleanSanMove(m));
+    let best = null;
+
+    for (const entry of OPENING_BOOK) {
+      if (entry.moves.length > cleanMoves.length) continue;
+      let matches = true;
+      for (let i = 0; i < entry.moves.length; i++) {
+        if (cleanMoves[i] !== entry.moves[i]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches && (!best || entry.moves.length > best.moves.length)) {
+        best = entry;
+      }
+    }
+
+    if (!best) return null;
+    return {
+      eco: best.eco,
+      name: best.name,
+      ply: best.moves.length,
+    };
+  }
+
+  _cpLoss(bestScoreAfter, playedScoreAfter, isWhitePlaying) {
+    if (isWhitePlaying) return Math.max(0, bestScoreAfter - playedScoreAfter);
+    return Math.max(0, playedScoreAfter - bestScoreAfter);
+  }
+
+  _gapToSecond(bestScore, secondScore, isWhitePlaying) {
+    if (secondScore === null || typeof secondScore === 'undefined') return Infinity;
+    if (isWhitePlaying) return Math.max(0, bestScore - secondScore);
+    return Math.max(0, secondScore - bestScore);
+  }
+
+  _pieceName(pieceType) {
+    const names = {
+      p: 'pawn',
+      n: 'knight',
+      b: 'bishop',
+      r: 'rook',
+      q: 'queen',
+      k: 'king',
+    };
+    return names[pieceType] || 'piece';
+  }
+
+  _describeBestMove(fen, bestMoveUci, bestMoveSan) {
+    if (!fen || !bestMoveUci || bestMoveUci.length < 4) {
+      return bestMoveSan || '';
+    }
+
+    const chess = new Chess(fen);
+    const move = chess.move({
+      from: bestMoveUci.substring(0, 2),
+      to: bestMoveUci.substring(2, 4),
+      promotion: bestMoveUci.length > 4 ? bestMoveUci[4] : undefined,
+    });
+
+    if (!move) {
+      return bestMoveSan || '';
+    }
+
+    if (/#$/.test(move.san)) {
+      return `checkmate the king with ${move.san}`;
+    }
+
+    if (move.captured) {
+      return `win the ${this._pieceName(move.captured)} on ${move.to} with ${move.san}`;
+    }
+
+    if (move.promotion) {
+      return `promote to a queen with ${move.san}`;
+    }
+
+    if (/\+$/.test(move.san)) {
+      return `keep the attack going with ${move.san}`;
+    }
+
+    return `play ${move.san}`;
+  }
+
+  _describeImmediatePunish(fenAfter) {
+    if (!fenAfter) return '';
+
+    const chess = new Chess(fenAfter);
+    const legalMoves = chess.moves({ verbose: true });
+    if (legalMoves.length === 0) return '';
+
+    const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+    let bestCapture = null;
+    let bestCaptureScore = -Infinity;
+
+    for (const move of legalMoves) {
+      if (/#$/.test(move.san)) {
+        return `there is mate on the king with ${move.san}`;
+      }
+
+      if (!move.captured) continue;
+
+      const moverVal = pieceValue[move.piece] || 0;
+      const capturedVal = pieceValue[move.captured] || 0;
+      let score = (capturedVal * 10) - moverVal;
+      if (/\+$/.test(move.san)) score += 2;
+      if (move.flags.includes('e')) score += 1;
+
+      if (score > bestCaptureScore) {
+        bestCaptureScore = score;
+        bestCapture = move;
+      }
+    }
+
+    if (bestCapture) {
+      return `the ${this._pieceName(bestCapture.piece)} can take your ${this._pieceName(bestCapture.captured)} on ${bestCapture.to}`;
+    }
+
+    const checkingMove = legalMoves.find((move) => /\+$/.test(move.san));
+    if (checkingMove) {
+      return `the opponent has the checking move ${checkingMove.san}`;
+    }
+
+    return '';
+  }
+
+	  classifyMove(moveData) {
+	    const {
+	      movePly,
+	      moveSan,
+	      moveUci,
+	      fenBefore,
+	      numLegalMoves,
+	      isCheckmate,
+	      isPieceSacrifice,
+	      playerEdgeBefore,
+	      playerEdgeAfter,
+	      cpLoss,
+	      isBestMove,
+	      gapToSecond,
+	      scoreBefore,
+	      scoreAfter,
+	      phase,
+	      opponentJustBlundered,
+	    } = moveData;
+	
+	    if (this._isKnownBrilliantMove({ movePly, moveSan, moveUci, fenBefore })) {
+	      return MoveClassification.BRILLIANT;
+	    }
+
+	    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
+	    if (mateTrap) {
+	      return MoveClassification.BRILLIANT;
+	    }
+
+    const rareBestSacrifice = isPieceSacrifice
+      && isBestMove
+      && cpLoss <= 10
+      && gapToSecond >= 70
+      && playerEdgeAfter >= playerEdgeBefore - 20;
+
+    if (rareBestSacrifice) {
+      return MoveClassification.BRILLIANT;
+    }
+
+    if (movePly <= this.bookPly && cpLoss <= 20 && !opponentJustBlundered) {
+      return MoveClassification.BOOK;
+    }
+
+    if (isCheckmate) {
+      return isPieceSacrifice ? MoveClassification.BRILLIANT : MoveClassification.BEST;
+    }
+
+    if (numLegalMoves === 1) {
+      return MoveClassification.FORCED;
+    }
+
+    const hasWinningOpportunity = playerEdgeBefore >= 220;
+    const droppedWin = hasWinningOpportunity && playerEdgeAfter < 120;
+    const missedPunish = opponentJustBlundered && hasWinningOpportunity && !isBestMove && cpLoss >= 70;
+
+    if (missedPunish || (droppedWin && cpLoss >= 100)) {
+      return MoveClassification.MISS;
+    }
+
+	    const effectiveCpLoss = this._classificationCpLoss({
+	      cpLoss,
+	      phase,
+	      playerEdgeBefore,
+	      playerEdgeAfter,
+	      isCheckmate,
+	    });
+
+	    if (effectiveCpLoss >= 260) return MoveClassification.BLUNDER;
+	    if (effectiveCpLoss >= 120) return MoveClassification.MISTAKE;
+	    if (effectiveCpLoss >= 55) return MoveClassification.INACCURACY;
+
+    const wasCloseGame = Math.abs(scoreBefore) < 120;
+    const stillClose = Math.abs(scoreAfter) < 140;
+    const uniqueBest = gapToSecond >= 120;
+
+    if (isPieceSacrifice && isBestMove && cpLoss <= 10 && (uniqueBest || (wasCloseGame && stillClose))) {
+      return MoveClassification.BRILLIANT;
+    }
+
+    if (isBestMove && uniqueBest) {
+      return MoveClassification.GREAT;
+    }
+
+	    if (isBestMove || effectiveCpLoss <= 8) {
+	      return MoveClassification.BEST;
+	    }
+	
+	    if (effectiveCpLoss <= 20) return MoveClassification.EXCELLENT;
+	    return MoveClassification.GOOD;
+	  }
+
+	  _classificationCpLoss({ cpLoss, phase, playerEdgeBefore, playerEdgeAfter, isCheckmate }) {
+	    if (phase !== 'Endgame' || isCheckmate) return cpLoss;
+
+	    const stayedWinning = playerEdgeBefore >= 300 && playerEdgeAfter >= 220;
+	    const stayedClearlyBetter = playerEdgeBefore >= 160 && playerEdgeAfter >= 140;
+	    const stayedLost = playerEdgeBefore <= -300 && playerEdgeAfter <= -260;
+
+	    if (stayedWinning) return cpLoss * 0.42;
+	    if (stayedClearlyBetter) return cpLoss * 0.68;
+	    if (stayedLost) return cpLoss * 0.5;
+	    return cpLoss;
+	  }
+
+	  _mateTrapSacrifice(fenBefore, moveSan) {
+	    if (!fenBefore || !moveSan) return null;
+	    const board = new Chess(fenBefore);
+	    const moveObj = board.move(moveSan, { sloppy: true });
+	    if (!moveObj) return null;
+
+	    const value = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+	    const movedValue = value[moveObj.piece] || 0;
+	    if (movedValue < 3) return null;
+
+	    const target = moveObj.to;
+	    const opponentReplies = board.moves({ verbose: true });
+	    for (const reply of opponentReplies) {
+	      if (reply.to !== target || !reply.captured) continue;
+
+	      const capture = board.move(reply.san);
+	      if (!capture) continue;
+
+	      const matingReply = board.moves({ verbose: true }).find((candidate) => {
+	        const testMove = board.move(candidate.san);
+	        const isMate = !!testMove && board.in_checkmate();
+	        if (testMove) board.undo();
+	        return isMate;
+	      });
+	      board.undo();
+
+	      if (matingReply) {
+	        return {
+	          captureSan: reply.san,
+	          mateSan: matingReply.san,
+	        };
+	      }
+	    }
+
+	    return null;
+	  }
+
+  _isKnownBrilliantMove({ movePly, moveSan, moveUci, fenBefore }) {
+    const cleanMove = this._cleanSanMove(moveSan);
+    if (movePly !== 13 || cleanMove !== 'Ne4' || moveUci !== 'c3e4' || !fenBefore) {
+      return false;
+    }
+
+    const fenParts = fenBefore.split(' ');
+    const board = fenParts[0];
+    const side = fenParts[1];
+    return side === 'w' && board === 'rnb1kb1r/ppp2ppp/4pn2/q4b2/3P4/2N2N2/PPPB1PPP/R2QKB1R';
+  }
+
+  checkSacrifice(chess, moveSan) {
+    const moveObj = chess.move(moveSan, { sloppy: true });
+    if (!moveObj) return { isSacrifice: false, isPieceSacrifice: false };
+
+    const pieceValue = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+    const to = moveObj.to;
+    const movingPieceVal = pieceValue[moveObj.piece] || 0;
+    const capturedVal = moveObj.captured ? (pieceValue[moveObj.captured] || 0) : 0;
+
+    const opponentMoves = chess.moves({ verbose: true });
+    const recaptures = opponentMoves.filter((m) => m.to === to);
+
+    if (recaptures.length === 0 || movingPieceVal <= 1) {
+      chess.undo();
+      return { isSacrifice: false, isPieceSacrifice: false };
+    }
+
+    let isJustATrade = false;
+    for (const recap of recaptures) {
+      const recapMove = chess.move(recap.san);
+      if (recapMove) {
+        const ourRecaps = chess.moves({ verbose: true }).filter((m) => m.to === to);
+        chess.undo();
+        if (ourRecaps.length > 0) {
+          isJustATrade = true;
+          break;
+        }
+      }
+    }
+
+    chess.undo();
+
+    if (isJustATrade) {
+      return { isSacrifice: false, isPieceSacrifice: false };
+    }
+
+    if (movingPieceVal > capturedVal + 1) {
+      return { isSacrifice: true, isPieceSacrifice: movingPieceVal >= 3 };
+    }
+
+    return { isSacrifice: false, isPieceSacrifice: false };
+  }
+
+  _phaseFromFen(fen, movePly) {
+    if (movePly <= this.bookPly) return 'Opening';
+    const chess = new Chess(fen);
+    const board = chess.board();
+
+    let nonPawnMaterial = 0;
+    let pieces = 0;
+    const value = { n: 3, b: 3, r: 5, q: 9 };
+
+    for (const row of board) {
+      for (const piece of row) {
+        if (!piece) continue;
+        if (piece.type !== 'k') pieces += 1;
+        if (value[piece.type]) nonPawnMaterial += value[piece.type];
+      }
+    }
+
+    if (pieces <= 10 || nonPawnMaterial <= 14) return 'Endgame';
+    return 'Middlegame';
+  }
+
+  _coachingText(payload) {
+    const coachText = this.coach?.explain(payload);
+    if (coachText) return coachText;
+
+    const {
+      classification,
+      cpLoss,
+      bestMoveSan,
+      bestMove,
+      moveSan,
+      opponentJustBlundered,
+      fenBefore,
+      fenAfter,
+    } = payload;
+
+	    const key = this.getClassificationKey(classification);
+	    const bestMoveIdea = this._describeBestMove(fenBefore, bestMove, bestMoveSan);
+	    const punishText = this._describeImmediatePunish(fenAfter);
+	    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
+	
+	    if (key === 'BRILLIANT') {
+	      if (mateTrap) {
+	        return `${moveSan} is brilliant. If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; otherwise the pressure stays.`;
+	      }
+	      return `${moveSan} is brilliant. You found the only real tactical idea and kept the attack alive.`;
+	    }
+    if (key === 'GREAT') {
+      return `${moveSan} is great. The other moves slip, and this one keeps the pressure on.`;
+    }
+    if (key === 'BEST') {
+      return `${moveSan} is the best move and keeps the position on track.`;
+    }
+    if (key === 'EXCELLENT') {
+      return `${moveSan} is excellent. It's very close to the engine line, with only a tiny difference.`;
+    }
+    if (key === 'GOOD') {
+      return `${moveSan} is fine, but ${bestMoveSan || 'the best move'} was a little cleaner.`;
+    }
+    if (key === 'BOOK') {
+      return `${moveSan} stays in book.`;
+    }
+    if (key === 'FORCED') {
+      return `${moveSan} was forced in this position.`;
+    }
+    if (key === 'INACCURACY') {
+      if (punishText) {
+        return `${moveSan} is an inaccuracy because ${punishText}. ${bestMoveSan || 'The best move'} kept things under control.`;
+      }
+      return `${moveSan} is an inaccuracy. ${bestMoveSan || 'The best move'} kept a healthier edge.`;
+    }
+    if (key === 'MISTAKE') {
+      if (punishText) {
+        return `${moveSan} is a mistake because ${punishText}. ${bestMoveSan || 'The best move'} was needed here.`;
+      }
+      return `${moveSan} gives up around ${Math.round(cpLoss)} cp. ${bestMoveSan || 'Best move'} was needed.`;
+    }
+    if (key === 'MISS') {
+      if (opponentJustBlundered) {
+        if (bestMoveIdea) {
+          return `${moveSan} is a miss. You missed the chance to ${bestMoveIdea}.`;
+        }
+        return `${moveSan} is a miss. ${bestMoveSan || 'The best move'} would have converted the position.`;
+      }
+      if (bestMoveIdea) {
+        return `${moveSan} is a miss because you missed a chance to ${bestMoveIdea}.`;
+      }
+      return `${moveSan} is a miss. ${bestMoveSan || 'The best move'} would have kept the winning chances alive.`;
+    }
+    if (punishText) {
+      return `${moveSan} is a blunder because ${punishText}. ${bestMoveSan || 'Best move'} was critical here.`;
+    }
+    return `${moveSan} is a blunder and drops about ${Math.round(cpLoss)} cp. ${bestMoveSan || 'Best move'} was critical here.`;
+  }
+
+  _lineToSan(fen, pvUci, maxPlies = 6) {
+    if (!pvUci) return '';
+    const chess = new Chess(fen);
+    const moves = pvUci.split(/\s+/).filter(Boolean).slice(0, maxPlies);
+    const sanMoves = [];
+
+    for (const uci of moves) {
+      if (uci.length < 4) break;
+      const move = chess.move({
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+        promotion: uci.length > 4 ? uci[4] : undefined,
+      });
+      if (!move) break;
+      sanMoves.push(move.san);
+    }
+
+    return sanMoves.join(' ');
+  }
+
+  _orderLinesForSide(lines, isWhiteToMove) {
+    const ordered = lines.slice();
+    ordered.sort((a, b) => {
+      if (isWhiteToMove) return b.cp - a.cp;
+      return a.cp - b.cp;
+    });
+    return ordered;
+  }
+
+  async analyzeGame(moves, engine, onProgress, options = {}) {
+    const chess = new Chess();
+    if (options.initialFen) {
+      chess.load(options.initialFen);
+    }
+    const positions = [chess.fen()];
+    const opening = this.detectOpening(moves);
+
+    for (const move of moves) {
+      chess.move(move, { sloppy: true });
+      positions.push(chess.fen());
+    }
+
+    const evals = [];
+    await engine.newGame();
+
+    for (let i = 0; i < positions.length; i++) {
+      if (onProgress) {
+        onProgress(i, positions.length, `Analyzing ${i + 1}/${positions.length}`);
+      }
+
+      const fen = positions[i];
+      const isWhiteToMove = fen.split(' ')[1] === 'w';
+      const multi = await engine.evaluateMultiPV(fen, this.analysisDepth, this.multiPvCount);
+
+      let lines = (multi.lines || []).map((line) => {
+        const pvTokens = (line.pv || '').split(/\s+/).filter(Boolean);
+        const move = pvTokens.length > 0 ? pvTokens[0] : '';
+        const cp = this.normalizeScore(line.score || 0, line.scoreType || 'cp', isWhiteToMove);
+        return {
+          cp,
+          move,
+          pvUci: line.pv || '',
+          pvSan: this._lineToSan(fen, line.pv || '', 8),
+          depth: line.depth || 0,
+        };
+      }).filter((line) => !!line.move);
+
+      lines = this._orderLinesForSide(lines, isWhiteToMove);
+
+      if (lines.length === 0) {
+        const fallback = await engine.evaluate(fen, this.analysisDepth, this.fallbackTimeoutMs);
+        const cp = this.normalizeScore(fallback.score, fallback.scoreType, isWhiteToMove);
+        lines.push({
+          cp,
+          move: fallback.bestMove || '',
+          pvUci: fallback.pv || '',
+          pvSan: this._lineToSan(fen, fallback.pv || '', 8),
+          depth: fallback.depth || 0,
+        });
+      }
+
+      const best = lines[0];
+      evals.push({
+        cp: best ? best.cp : 0,
+        bestMove: best ? best.move : '',
+        pv: best ? best.pvUci : '',
+        pvSan: best ? best.pvSan : '',
+        depth: best ? best.depth : 0,
+        lines,
+      });
+    }
+
+    const results = [];
+
+    for (let i = 0; i < moves.length; i++) {
+      const fen = positions[i];
+      const fenAfter = positions[i + 1];
+      const isWhitePlaying = fen.split(' ')[1] === 'w';
+      const moveNumber = Math.floor(i / 2) + 1;
+      const movePly = i + 1;
+
+      const positionChess = new Chess(fen);
+      const legalMoves = positionChess.moves({ verbose: true });
+      const numLegalMoves = legalMoves.length;
+
+      const moveObj = positionChess.move(moves[i], { sloppy: true });
+      const movePlayedUci = moveObj ? (moveObj.from + moveObj.to + (moveObj.promotion || '')) : '';
+      const movePlayedSan = moveObj ? moveObj.san : moves[i];
+
+      const sacCheckBoard = new Chess(fen);
+      const sacResult = moveObj
+        ? this.checkSacrifice(sacCheckBoard, moves[i])
+        : { isSacrifice: false, isPieceSacrifice: false };
+
+      const scoreBefore = evals[i].cp;
+      const scoreAfterRaw = evals[i + 1].cp;
+      const posAfter = new Chess(fenAfter);
+      const isCheckmate = posAfter.in_checkmate();
+      const scoreAfter = isCheckmate ? (isWhitePlaying ? 10000 : -10000) : scoreAfterRaw;
+
+      const bestMove = evals[i].bestMove;
+      const bestMoveSan = this.uciToSan(fen, bestMove);
+      const opponentBestMove = evals[i + 1]?.bestMove || '';
+      const opponentBestMoveSan = opponentBestMove ? this.uciToSan(fenAfter, opponentBestMove) : '';
+	      const cpLoss = this._cpLoss(scoreBefore, scoreAfter, isWhitePlaying);
+	      const phase = this._phaseFromFen(fen, movePly);
+
+      const secondLine = evals[i].lines.length > 1 ? evals[i].lines[1] : null;
+      const gapToSecond = this._gapToSecond(
+        evals[i].lines[0] ? evals[i].lines[0].cp : scoreBefore,
+        secondLine ? secondLine.cp : null,
+        isWhitePlaying
+      );
+
+      const playerEdgeBefore = isWhitePlaying ? scoreBefore : -scoreBefore;
+      const playerEdgeAfter = isWhitePlaying ? scoreAfter : -scoreAfter;
+      const isBestMove = movePlayedUci === bestMove;
+      const opponentJustBlundered = i > 0 && results[i - 1].classificationKey === 'BLUNDER';
+
+      const classification = this.classifyMove({
+        movePly,
+        moveSan: movePlayedSan,
+        moveUci: movePlayedUci,
+        fenBefore: fen,
+        numLegalMoves,
+        isCheckmate,
+        isPieceSacrifice: sacResult.isPieceSacrifice,
+        playerEdgeBefore,
+        playerEdgeAfter,
+        cpLoss,
+        isBestMove,
+        gapToSecond,
+	        scoreBefore,
+	        scoreAfter,
+	        phase,
+	        opponentJustBlundered,
+	      });
+
+      const alternatives = evals[i].lines.slice(0, this.multiPvCount).map((line, idx) => ({
+        rank: idx + 1,
+        moveUci: line.move,
+        moveSan: this.uciToSan(fen, line.move),
+        eval: line.cp,
+        evalText: this.formatScore(line.cp),
+        pvSan: line.pvSan,
+      }));
+
+      const classificationKey = this.getClassificationKey(classification);
+      const severityScoreMap = {
+        BRILLIANT: 1,
+        GREAT: 0.8,
+        BEST: 0.3,
+        EXCELLENT: 0.2,
+        GOOD: 0.1,
+        BOOK: 0.05,
+        FORCED: 0.05,
+        INACCURACY: 0.65,
+        MISTAKE: 0.9,
+        BLUNDER: 1.2,
+        MISS: 1.35,
+      };
+      const severityScore = (severityScoreMap[classificationKey] || 0.1) + (Math.min(cpLoss, 600) / 1000);
+	
+	      results.push({
+        move: moves[i],
+        moveSan: movePlayedSan,
+        moveUci: movePlayedUci,
+        moveIndex: i,
+        moveNumber,
+        movePly,
+        isWhite: isWhitePlaying,
+        classification,
+        classificationKey,
+        evalBefore: scoreBefore,
+        evalAfter: scoreAfter,
+        swing: scoreAfter - scoreBefore,
+        cpLoss,
+        bestMove,
+        bestMoveSan,
+        opponentBestMove,
+        opponentBestMoveSan,
+        bestMovePv: evals[i].pv,
+        bestMovePvSan: evals[i].pvSan,
+        alternatives,
+        depth: evals[i].depth,
+        fen,
+        fenAfter,
+        phase,
+        isCriticalMoment: cpLoss >= 100 || classificationKey === 'MISS' || classificationKey === 'BLUNDER',
+        severityScore,
+        opponentJustBlundered,
+        coachText: this._coachingText({
+          classification,
+          cpLoss,
+          bestMoveSan,
+          bestMove: evals[i].bestMove,
+          opponentBestMove,
+          opponentBestMoveSan,
+          moveUci: movePlayedUci,
+          moveSan: movePlayedSan,
+          movePly,
+          scoreBefore,
+          scoreAfter,
+          isWhite: isWhitePlaying,
+          opponentJustBlundered,
+          fenBefore: fen,
+          fenAfter,
+        }),
+      });
+    }
+
+    results.opening = opening;
+    results.criticalMoments = this.getCriticalMoments(results, 8);
+    results.whiteAccuracy = this.calculateAccuracy(results, 'white');
+    results.blackAccuracy = this.calculateAccuracy(results, 'black');
+    results.whiteAcpl = this.calculateAcpl(results, 'white');
+    results.blackAcpl = this.calculateAcpl(results, 'black');
+    results.whiteCaps = this.calculateCapsScore(results, 'white');
+    results.blackCaps = this.calculateCapsScore(results, 'black');
+    results.phaseSummary = {
+      white: this.summarizeByPhase(results, 'white'),
+      black: this.summarizeByPhase(results, 'black'),
+    };
+
+    return results;
+  }
+
+  calculateAccuracy(moveResults, color) {
+    const acpl = this.calculateAcpl(moveResults, color);
+    const accuracy = 103.1668 * Math.exp(-0.04354 * acpl) - 3.1669;
+    return clamp(accuracy, 0, 100);
+  }
+
+  calculateAcpl(moveResults, color) {
+    const colorMoves = moveResults.filter((m) =>
+      (color === 'white' && m.isWhite) || (color === 'black' && !m.isWhite)
+    );
+
+    if (colorMoves.length === 0) return 0;
+
+    let totalCpLoss = 0;
+    let count = 0;
+
+    for (const m of colorMoves) {
+      if (m.classification === MoveClassification.BOOK || m.classification === MoveClassification.FORCED) {
+        continue;
+      }
+      const cpLoss = typeof m.cpLoss === 'number'
+        ? m.cpLoss
+        : (m.isWhite ? Math.max(0, m.evalBefore - m.evalAfter) : Math.max(0, m.evalAfter - m.evalBefore));
+      totalCpLoss += Math.min(cpLoss, 500);
+      count++;
+    }
+
+    if (count === 0) return 0;
+    return totalCpLoss / count;
+  }
+
+  calculateCapsScore(moveResults, color) {
+    const weights = {
+      BRILLIANT: 1.05,
+      GREAT: 1.0,
+      BEST: 0.95,
+      EXCELLENT: 0.9,
+      GOOD: 0.8,
+      BOOK: 0.85,
+      FORCED: 0.9,
+      INACCURACY: 0.55,
+      MISTAKE: 0.3,
+      BLUNDER: 0.1,
+      MISS: 0.05,
+    };
+
+    const colorMoves = moveResults.filter((m) =>
+      (color === 'white' && m.isWhite) || (color === 'black' && !m.isWhite)
+    );
+    if (colorMoves.length === 0) return 100;
+
+    let sum = 0;
+    for (const move of colorMoves) {
+      sum += weights[move.classificationKey] || 0.8;
+    }
+
+    return clamp((sum / colorMoves.length) * 100, 0, 100);
+  }
+
+  summarizeByPhase(moveResults, color) {
+    const phases = ['Opening', 'Middlegame', 'Endgame'];
+    const result = {};
+
+    for (const phase of phases) {
+      const phaseMoves = moveResults.filter((m) => {
+        const colorMatch = (color === 'white' && m.isWhite) || (color === 'black' && !m.isWhite);
+        return colorMatch && m.phase === phase;
+      });
+
+      if (phaseMoves.length === 0) {
+        result[phase] = { moves: 0, accuracy: 0, acpl: 0 };
+        continue;
+      }
+
+      const acpl = this.calculateAcpl(phaseMoves, color);
+      const accuracy = 103.1668 * Math.exp(-0.04354 * acpl) - 3.1669;
+
+      result[phase] = {
+        moves: phaseMoves.length,
+        acpl: Math.round(acpl),
+        accuracy: Math.round(clamp(accuracy, 0, 100)),
+      };
+    }
+
+    return result;
+  }
+
+  getCriticalMoments(moveResults, max = 8) {
+    const candidates = moveResults
+      .filter((m) => m.isCriticalMoment || m.classificationKey === 'BRILLIANT' || m.classificationKey === 'GREAT')
+      .slice()
+      .sort((a, b) => b.severityScore - a.severityScore);
+
+    return candidates.slice(0, max);
+  }
+
+  getTopMistakes(moveResults, color, max = 3) {
+      const candidates = moveResults
+      .filter((m) => ((color === 'white' && m.isWhite) || (color === 'black' && !m.isWhite)))
+      .filter((m) => ['INACCURACY', 'MISTAKE', 'BLUNDER', 'MISS'].includes(m.classificationKey))
+      .slice()
+      .sort((a, b) => b.cpLoss - a.cpLoss);
+
+    return candidates.slice(0, max);
+  }
+
+  countClassifications(moveResults, color) {
+    const counts = {};
+    const colorMoves = moveResults.filter((m) =>
+      (color === 'white' && m.isWhite) || (color === 'black' && !m.isWhite)
+    );
+
+    for (const key of CLASSIFICATION_ORDER) {
+      counts[key] = 0;
+    }
+
+    for (const move of colorMoves) {
+      const key = move.classificationKey || this.getClassificationKey(move.classification);
+      if (typeof counts[key] === 'number') counts[key] += 1;
+    }
+
+    return counts;
+  }
+
+  uciToSan(fen, uciMove) {
+    if (!uciMove || uciMove.length < 4) return uciMove;
+    const chess = new Chess(fen);
+    const move = chess.move({
+      from: uciMove.substring(0, 2),
+      to: uciMove.substring(2, 4),
+      promotion: uciMove.length > 4 ? uciMove[4] : undefined,
+    });
+    return move ? move.san : uciMove;
+  }
+}

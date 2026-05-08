@@ -1,0 +1,19 @@
+[build]
+  command = "npm run build"
+  publish = "public"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["public/js/analysis.js", "node_modules/stockfish/bin/**"]
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
