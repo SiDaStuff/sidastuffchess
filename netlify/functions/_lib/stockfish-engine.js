@@ -1,4 +1,26 @@
+const fs = require('fs');
+const path = require('path');
 const initStockfish = require('stockfish');
+
+function stockfishEnginePath() {
+  let packageRoot = '';
+  try {
+    packageRoot = path.dirname(require.resolve('stockfish/package.json'));
+  } catch (_err) {
+    packageRoot = path.resolve(process.cwd(), 'node_modules/stockfish');
+  }
+  const candidates = [
+    packageRoot ? path.join(packageRoot, 'bin', 'stockfish-18-lite-single.js') : '',
+    path.resolve(__dirname, '../../node_modules/stockfish/bin/stockfish-18-lite-single.js'),
+    path.resolve(__dirname, '../../../node_modules/stockfish/bin/stockfish-18-lite-single.js'),
+    path.resolve(process.cwd(), 'node_modules/stockfish/bin/stockfish-18-lite-single.js'),
+  ].filter(Boolean);
+  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!found) {
+    throw new Error(`Cannot find Stockfish lite single engine. Checked: ${candidates.join(', ')}`);
+  }
+  return found;
+}
 
 class ServerStockfishEngine {
   constructor() {
@@ -10,7 +32,7 @@ class ServerStockfishEngine {
   }
 
   async init() {
-    this.engine = await initStockfish('lite-single');
+    this.engine = await initStockfish(stockfishEnginePath());
     this.engine.listener = (line) => this._handleLine(line);
     await this._uci();
     await this.configure();

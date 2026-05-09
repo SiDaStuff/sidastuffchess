@@ -5,7 +5,7 @@
 
 [functions]
   node_bundler = "esbuild"
-  included_files = ["public/js/analysis.js", "node_modules/stockfish/bin/**"]
+  included_files = ["public/js/analysis.js", "node_modules/stockfish/package.json", "node_modules/stockfish/bin/**"]
 
 [[headers]]
   for = "/*"

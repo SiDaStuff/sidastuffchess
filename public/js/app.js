@@ -1891,7 +1891,7 @@ class ChessReviewApp {
     );
 	    const isCheckmate = nextChess.in_checkmate();
 	    const isBestMove = playedUci === bestMove;
-	    const opponentJustBlundered = moveIndex > 0 && this.liveMoveResults[moveIndex - 1]?.classificationKey === 'BLUNDER';
+	    const opponentJustBlundered = moveIndex > 0 && ['BLUNDER', 'MISTAKE'].includes(this.liveMoveResults[moveIndex - 1]?.classificationKey);
 	    const phase = this.analyzer._phaseFromFen(fenBefore, movePly);
 	    const playerRating = this.coachMode.active
 	      ? this.coachMode.elo

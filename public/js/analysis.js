@@ -617,21 +617,20 @@ class MoveAnalyzer {
 		    } = moveData;
 		    const opponentMateAfter = this._opponentImmediateMateAfter(fenBefore, moveSan);
 		    const expectedLoss = this.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
+		    const beforeExpected = this.expectedPoints(playerEdgeBefore, playerRating);
+		    const afterExpected = this.expectedPoints(playerEdgeAfter, playerRating);
 		    const tolerance = this._reviewTolerance(playerRating, timeControl);
 		    const nearlyBest = isBestMove || cpLoss <= 18 || expectedLoss <= 0.012;
 		    const positionAfterOk = playerEdgeAfter > -120 && this.expectedPoints(playerEdgeAfter, playerRating) >= 0.38;
-		    const wasAlreadyCrushing = playerEdgeBefore >= 900 && !opponentJustBlundered;
+		    const wasAlreadyCrushing = this.expectedPoints(playerEdgeBefore, playerRating) >= 0.9 && !opponentJustBlundered;
+		    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan);
 		
-		    if (!opponentMateAfter && this._isKnownBrilliantMove({ movePly, moveSan, moveUci, fenBefore })) {
-		      return MoveClassification.BRILLIANT;
-		    }
-	
 		    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
-		    if (!opponentMateAfter && mateTrap && nearlyBest && positionAfterOk) {
+		    if (!opponentMateAfter && mateTrap && nearlyBest && positionAfterOk && !wasAlreadyCrushing) {
 		      return MoveClassification.BRILLIANT;
 		    }
 
-	    const rareBestSacrifice = isPieceSacrifice
+	    const rareBestSacrifice = goodPieceSacrifice
 	      && nearlyBest
 	      && gapToSecond >= 70
 	      && playerEdgeAfter >= playerEdgeBefore - 20
@@ -661,12 +660,13 @@ class MoveAnalyzer {
 	        : MoveClassification.MISTAKE;
 	    }
 
-	    const hasWinningOpportunity = playerEdgeBefore >= 220;
-	    const droppedWin = hasWinningOpportunity && playerEdgeAfter < 120;
-	    const missedPunish = opponentJustBlundered
-	      && hasWinningOpportunity
-	      && !nearlyBest
-	      && (cpLoss >= 70 || expectedLoss >= 0.05);
+		    const hasWinningOpportunity = playerEdgeBefore >= 220;
+		    const droppedWin = hasWinningOpportunity && playerEdgeAfter < 120;
+		    const missedPunish = opponentJustBlundered
+		      && beforeExpected >= 0.72
+		      && afterExpected < 0.65
+		      && !nearlyBest
+		      && (cpLoss >= 70 || expectedLoss >= 0.05);
 	
 	    if (missedPunish || (droppedWin && cpLoss >= 100)) {
 	      return MoveClassification.MISS;
@@ -688,19 +688,21 @@ class MoveAnalyzer {
     const stillClose = Math.abs(scoreAfter) < 140;
     const uniqueBest = gapToSecond >= 120;
 
-	    if (isPieceSacrifice
-	      && nearlyBest
-	      && !opponentMateAfter
+		    if (goodPieceSacrifice
+		      && nearlyBest
+		      && !opponentMateAfter
 	      && positionAfterOk
 	      && !wasAlreadyCrushing
 	      && (uniqueBest || (wasCloseGame && stillClose))) {
 	      return MoveClassification.BRILLIANT;
 	    }
 	
-	    const onlyGoodMove = nearlyBest && uniqueBest && gapToSecond >= 140;
-	    if (isBestMove && onlyGoodMove) {
-	      return MoveClassification.GREAT;
-	    }
+		    const losingToEqual = beforeExpected <= 0.32 && afterExpected >= 0.45;
+		    const equalToWinning = beforeExpected >= 0.38 && beforeExpected <= 0.62 && afterExpected >= 0.72;
+		    const onlyGoodMove = nearlyBest && uniqueBest && gapToSecond >= 140;
+		    if (isBestMove && (onlyGoodMove || losingToEqual || equalToWinning)) {
+		      return MoveClassification.GREAT;
+		    }
 	
 	    if (isBestMove || expectedLoss <= 0.003 || effectiveCpLoss <= 8) {
 	      return MoveClassification.BEST;
@@ -781,18 +783,6 @@ class MoveAnalyzer {
 		    }
 		    return null;
 		  }
-
-  _isKnownBrilliantMove({ movePly, moveSan, moveUci, fenBefore }) {
-    const cleanMove = this._cleanSanMove(moveSan);
-    if (movePly !== 13 || cleanMove !== 'Ne4' || moveUci !== 'c3e4' || !fenBefore) {
-      return false;
-    }
-
-    const fenParts = fenBefore.split(' ');
-    const board = fenParts[0];
-    const side = fenParts[1];
-    return side === 'w' && board === 'rnb1kb1r/ppp2ppp/4pn2/q4b2/3P4/2N2N2/PPPB1PPP/R2QKB1R';
-  }
 
   checkSacrifice(chess, moveSan) {
     const moveObj = chess.move(moveSan, { sloppy: true });
@@ -1282,7 +1272,7 @@ class MoveAnalyzer {
 	      const timeControl = options.headers?.TimeControl || options.headers?.Time || '';
 	      const expectedLoss = this.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
 	      const isBestMove = movePlayedUci === bestMove;
-	      const opponentJustBlundered = i > 0 && results[i - 1].classificationKey === 'BLUNDER';
+	      const opponentJustBlundered = i > 0 && ['BLUNDER', 'MISTAKE'].includes(results[i - 1].classificationKey);
 	      const mateThreat = this._mateThreat(fenAfter);
 
       const classification = this.classifyMove({
@@ -1422,11 +1412,34 @@ class MoveAnalyzer {
 	  calculateAccuracy(moveResults, color) {
 	    const expectedLoss = this.calculateExpectedLoss(moveResults, color);
 	    if (expectedLoss !== null) {
-	      return Math.round(clamp(100 - (expectedLoss * 220), 0, 100));
+	      const evalScore = clamp(100 - (expectedLoss * 220), 0, 100);
+	      const bestMoveScore = this._bestMoveAccuracyScore(moveResults, color);
+	      return Math.round(clamp((evalScore * 0.65) + (bestMoveScore * 0.35), 0, 100));
 	    }
 	    const acpl = this.calculateAcpl(moveResults, color);
 	    const accuracy = 103.1668 * Math.exp(-0.04354 * acpl) - 3.1669;
 	    return Math.round(clamp(accuracy, 0, 100));
+	  }
+
+	  _bestMoveAccuracyScore(moveResults, color) {
+	    const weights = {
+	      BRILLIANT: 100,
+	      GREAT: 98,
+	      BEST: 96,
+	      EXCELLENT: 90,
+	      GOOD: 78,
+	      BOOK: 92,
+	      FORCED: 92,
+	      INACCURACY: 58,
+	      MISTAKE: 32,
+	      BLUNDER: 8,
+	      MISS: 14,
+	    };
+	    const moves = moveResults.filter((m) =>
+	      (color === 'white' && m.isWhite) || (color === 'black' && !m.isWhite)
+	    );
+	    if (moves.length === 0) return 100;
+	    return moves.reduce((sum, move) => sum + (weights[move.classificationKey] ?? 78), 0) / moves.length;
 	  }
 
 	  calculateExpectedLoss(moveResults, color) {
