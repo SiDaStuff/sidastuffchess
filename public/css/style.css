@@ -131,11 +131,22 @@ body:not(.menu-active) .main-menu {
   z-index: 1;
   align-self: end;
   width: min(520px, 92vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
   color: var(--text-primary);
-  font-size: 2rem;
+  font-size: 1.9rem;
   font-weight: 700;
   letter-spacing: 0;
   text-align: center;
+}
+
+.main-menu-brand img {
+  width: min(132px, 34vw);
+  height: min(132px, 34vw);
+  object-fit: contain;
+  filter: drop-shadow(0 12px 20px rgba(18, 31, 42, 0.12));
 }
 
 .main-menu-actions {
@@ -220,13 +231,12 @@ body:not(.menu-active) .main-menu {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 0 0 16px;
-  margin-bottom: 18px;
-  background: transparent;
-  border: 0;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
   box-shadow: none;
-  border-bottom: 1px solid var(--border-soft);
-  border-radius: 0;
+  border-radius: var(--card-radius);
 }
 
 .brand {
@@ -236,20 +246,20 @@ body:not(.menu-active) .main-menu {
 }
 
 .brand-mark {
-  width: 40px;
-  height: 40px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  background: var(--bg-strong);
+  background: var(--bg-muted);
   color: var(--accent-contrast);
-  border: 0;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
 }
 
 .brand-mark img {
-  width: 76%;
-  height: 76%;
+  width: 84%;
+  height: 84%;
   object-fit: contain;
 }
 
@@ -270,7 +280,7 @@ body:not(.menu-active) .main-menu {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
 }
 
 /* ===== Buttons ===== */
@@ -1137,7 +1147,8 @@ body:not(.menu-active) .main-menu {
 }
 
 .engine-info[hidden],
-.live-eval[hidden] {
+.live-eval[hidden],
+.move-insights[hidden] {
   display: none;
 }
 

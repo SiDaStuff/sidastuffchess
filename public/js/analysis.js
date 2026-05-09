@@ -617,10 +617,13 @@ class MoveAnalyzer {
 		    } = moveData;
 		    const opponentMateAfter = this._opponentImmediateMateAfter(fenBefore, moveSan);
 		    const expectedLoss = this.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
-		    const beforeExpected = this.expectedPoints(playerEdgeBefore, playerRating);
-		    const afterExpected = this.expectedPoints(playerEdgeAfter, playerRating);
-		    const tolerance = this._reviewTolerance(playerRating, timeControl);
-		    const nearlyBest = isBestMove || cpLoss <= 18 || expectedLoss <= 0.012;
+			    const beforeExpected = this.expectedPoints(playerEdgeBefore, playerRating);
+			    const afterExpected = this.expectedPoints(playerEdgeAfter, playerRating);
+			    const tolerance = this._reviewTolerance(playerRating, timeControl);
+			    const losingOnOpponentMove = opponentMateAfter
+			      || playerEdgeAfter <= -120
+			      || afterExpected <= 0.38;
+			    const nearlyBest = isBestMove || cpLoss <= 18 || expectedLoss <= 0.012;
 		    const positionAfterOk = playerEdgeAfter > -120 && this.expectedPoints(playerEdgeAfter, playerRating) >= 0.38;
 		    const wasAlreadyCrushing = this.expectedPoints(playerEdgeBefore, playerRating) >= 0.9 && !opponentJustBlundered;
 		    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan);
@@ -680,7 +683,9 @@ class MoveAnalyzer {
 	      isCheckmate,
 	    });
 
-	    if (expectedLoss > 0.20 * tolerance || effectiveCpLoss >= 320 * tolerance) return MoveClassification.BLUNDER;
+		    if (expectedLoss > 0.20 * tolerance || effectiveCpLoss >= 320 * tolerance) {
+		      return losingOnOpponentMove ? MoveClassification.BLUNDER : MoveClassification.MISTAKE;
+		    }
 	    if (expectedLoss > 0.10 * tolerance || effectiveCpLoss >= 155 * tolerance) return MoveClassification.MISTAKE;
 	    if (expectedLoss > 0.05 * tolerance || effectiveCpLoss >= 70 * tolerance) return MoveClassification.INACCURACY;
 
@@ -1184,7 +1189,7 @@ class MoveAnalyzer {
 
       const fen = positions[i];
       const isWhiteToMove = fen.split(' ')[1] === 'w';
-      const multi = await engine.evaluateMultiPV(fen, this.analysisDepth, this.multiPvCount);
+      const multi = await engine.evaluateMultiPV(fen, this.analysisDepth, this.multiPvCount, this.fallbackTimeoutMs);
 
       let lines = (multi.lines || []).map((line) => {
         const pvTokens = (line.pv || '').split(/\s+/).filter(Boolean);

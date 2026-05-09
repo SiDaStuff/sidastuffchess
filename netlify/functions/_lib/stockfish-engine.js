@@ -55,12 +55,6 @@ class ServerStockfishEngine {
 
   _waitFor(token, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
-      const existing = this.history.find((line) => line.includes(token));
-      if (existing) {
-        resolve(existing);
-        return;
-      }
-
       let timer = null;
       const handler = (line) => {
         if (!line.includes(token)) return;
@@ -123,6 +117,25 @@ class ServerStockfishEngine {
     return new Promise((resolve, reject) => {
       let bestInfo = null;
       let timer = null;
+      let hardTimer = null;
+      let settled = false;
+
+      const finish = (bestMove = '') => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (hardTimer) clearTimeout(hardTimer);
+        this._removeHandler(handler);
+        if (this.activeSearch?.handler === handler) this.activeSearch = null;
+        resolve({
+          score: bestInfo ? bestInfo.score : 0,
+          scoreType: bestInfo ? bestInfo.scoreType : 'cp',
+          bestMove,
+          pv: bestInfo ? bestInfo.pv : '',
+          depth: bestInfo ? bestInfo.depth : 0,
+          timedOut: !bestMove,
+        });
+      };
 
       const handler = (line) => {
         if (line.startsWith('info') && line.includes('depth')) {
@@ -131,28 +144,23 @@ class ServerStockfishEngine {
         }
 
         if (line.startsWith('bestmove')) {
-          if (timer) clearTimeout(timer);
-          this._removeHandler(handler);
-          if (this.activeSearch?.handler === handler) this.activeSearch = null;
-          resolve({
-            score: bestInfo ? bestInfo.score : 0,
-            scoreType: bestInfo ? bestInfo.scoreType : 'cp',
-            bestMove: line.split(' ')[1],
-            pv: bestInfo ? bestInfo.pv : '',
-            depth: bestInfo ? bestInfo.depth : 0,
-          });
+          finish(line.split(' ')[1] || '');
         }
       };
 
-      timer = setTimeout(() => this._send('stop'), timeoutMs);
+      timer = setTimeout(() => {
+        this._send('stop');
+        hardTimer = setTimeout(() => finish(bestInfo?.pv?.split(/\s+/).filter(Boolean)[0] || ''), 900);
+        if (this.activeSearch?.handler === handler) this.activeSearch.hardTimer = hardTimer;
+      }, timeoutMs);
       this._addHandler(handler);
-      this.activeSearch = { handler, timer, reject };
+      this.activeSearch = { handler, timer, hardTimer, reject };
       this._send(`position fen ${fen}`);
       this._send(`go depth ${depth}`);
     });
   }
 
-  async evaluateMultiPV(fen, depth = 10, numPV = 2) {
+  async evaluateMultiPV(fen, depth = 10, numPV = 2, timeoutMs = 12000) {
     if (!this.ready) throw new Error('Engine not ready');
     this._cancelActiveSearch();
     this._send('stop');
@@ -164,6 +172,27 @@ class ServerStockfishEngine {
     return new Promise((resolve, reject) => {
       const pvResults = {};
       let timer = null;
+      let hardTimer = null;
+      let settled = false;
+
+      const finish = (bestMove = '') => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (hardTimer) clearTimeout(hardTimer);
+        this._removeHandler(handler);
+        if (this.activeSearch?.handler === handler) this.activeSearch = null;
+        this._send('setoption name MultiPV value 1');
+        const lines = [];
+        for (let i = 1; i <= numPV; i += 1) {
+          if (pvResults[i]) lines.push(pvResults[i]);
+        }
+        resolve({
+          lines,
+          bestMove: bestMove || lines[0]?.pv?.split(/\s+/).filter(Boolean)[0] || '',
+          timedOut: !bestMove,
+        });
+      };
 
       const handler = (line) => {
         if (line.startsWith('info') && line.includes('depth') && line.includes(' pv ')) {
@@ -177,21 +206,17 @@ class ServerStockfishEngine {
         }
 
         if (line.startsWith('bestmove')) {
-          if (timer) clearTimeout(timer);
-          this._removeHandler(handler);
-          if (this.activeSearch?.handler === handler) this.activeSearch = null;
-          this._send('setoption name MultiPV value 1');
-          const lines = [];
-          for (let i = 1; i <= numPV; i += 1) {
-            if (pvResults[i]) lines.push(pvResults[i]);
-          }
-          resolve({ lines, bestMove: line.split(' ')[1] });
+          finish(line.split(' ')[1] || '');
         }
       };
 
-      timer = setTimeout(() => this._send('stop'), 12000);
+      timer = setTimeout(() => {
+        this._send('stop');
+        hardTimer = setTimeout(() => finish(), 900);
+        if (this.activeSearch?.handler === handler) this.activeSearch.hardTimer = hardTimer;
+      }, timeoutMs);
       this._addHandler(handler);
-      this.activeSearch = { handler, timer, reject };
+      this.activeSearch = { handler, timer, hardTimer, reject };
       this._send(`position fen ${fen}`);
       this._send(`go depth ${depth}`);
     });
@@ -199,8 +224,9 @@ class ServerStockfishEngine {
 
   _cancelActiveSearch() {
     if (!this.activeSearch) return;
-    const { handler, timer, reject } = this.activeSearch;
+    const { handler, timer, hardTimer, reject } = this.activeSearch;
     if (timer) clearTimeout(timer);
+    if (hardTimer) clearTimeout(hardTimer);
     this._removeHandler(handler);
     this.activeSearch = null;
     if (reject) reject(new Error('Search cancelled'));

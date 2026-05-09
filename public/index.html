@@ -16,15 +16,18 @@
 <body class="menu-active">
   <div id="app">
     <section id="main-menu" class="main-menu" aria-label="Main menu">
-      <div class="main-menu-brand" aria-hidden="true">SiDaStuff CHESS</div>
+      <div class="main-menu-brand" aria-hidden="true">
+        <img src="./assets/logo.png" alt="">
+        <span>SiDaStuff Chess</span>
+      </div>
       <div class="main-menu-actions">
         <button id="btn-menu-import" class="menu-button menu-button-primary">
           <span class="material-symbols-outlined btn-symbol">upload_file</span>
-          <span>IMPORT GAME</span>
+          <span>Import</span>
         </button>
         <button id="btn-menu-coach" class="menu-button">
           <span class="material-symbols-outlined btn-symbol">psychology</span>
-          <span>PLAY COACH</span>
+          <span>Coach</span>
         </button>
       </div>
     </section>
@@ -34,21 +37,27 @@
       <div class="brand">
 	        <div class="brand-mark"><img src="./assets/logo.png" alt=""></div>
 	        <div class="brand-copy">
-	          <p class="brand-kicker">Chess workspace</p>
-	          <h1>SiDaStuff CHESS</h1>
+	          <p class="brand-kicker">Review</p>
+	          <h1>SiDaStuff Chess</h1>
 				  </div>
 	      </div>
 	      <div class="header-actions">
+        <button id="btn-back-menu" class="btn btn-secondary header-menu-button">
+          <span class="btn-content">
+            <span class="material-symbols-outlined btn-symbol">home</span>
+            <span class="btn-label">Menu</span>
+          </span>
+        </button>
         <button id="btn-import" class="btn btn-primary">
           <span class="btn-content">
             <span class="material-symbols-outlined btn-symbol">upload_file</span>
-            <span class="btn-label">IMPORT GAME</span>
+            <span class="btn-label">Import</span>
           </span>
         </button>
         <button id="btn-coach" class="btn btn-secondary">
           <span class="btn-content">
             <span class="material-symbols-outlined btn-symbol">psychology</span>
-            <span class="btn-label">PLAY COACH</span>
+            <span class="btn-label">Coach</span>
           </span>
         </button>
         <button id="btn-settings" class="btn btn-secondary">
@@ -126,15 +135,6 @@
 
       <!-- Analysis Panel -->
       <div class="analysis-panel">
-        <div class="panel-nav panel-wide">
-          <button id="btn-back-menu" class="btn btn-secondary">
-            <span class="btn-content">
-              <span class="material-symbols-outlined btn-symbol">arrow_back</span>
-              <span class="btn-label">Main Menu</span>
-            </span>
-          </button>
-        </div>
-
         <!-- Live Feedback -->
 	        <div class="live-eval card panel-wide" id="live-eval" hidden>
 	          <div class="card-header">

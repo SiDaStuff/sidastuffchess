@@ -2825,13 +2825,13 @@ class ChessReviewApp {
 	        text: err.message,
 	      });
 	    } finally {
-      this.isAnalyzing = false;
-      this._setEngineControlsDisabled(false);
-      this._syncActionButtons();
-      this.elReviewBtnText.textContent = 'Re-analyze Game';
-      this.elProgressBar.style.display = 'none';
-      this.board.clearLoading();
-    }
+	      this.isAnalyzing = false;
+	      this._setEngineControlsDisabled(false);
+	      this._syncActionButtons();
+	      this.elReviewBtnText.textContent = this.analysisResults ? 'Re-analyze Game' : 'Start Review';
+	      this.elProgressBar.style.display = 'none';
+	      this.board.clearLoading();
+	    }
   }
 
 	  async _analyzeGameOnServer() {
@@ -2839,7 +2839,19 @@ class ChessReviewApp {
 	    this.elReviewBtnText.textContent = 'Sending to Server...';
 	    this.elProgressFill.style.width = '12%';
 	    const controller = new AbortController();
-	    const timeout = setTimeout(() => controller.abort(), 45000);
+	    const timeout = setTimeout(() => controller.abort(), 28000);
+	    let progress = 12;
+	    const progressTimer = setInterval(() => {
+	      progress = Math.min(progress + 3, 68);
+	      this.elProgressFill.style.width = `${progress}%`;
+	      this.elReviewBtnText.textContent = 'Server Reviewing...';
+	      this._updateLiveEvalPanel({
+	        busy: true,
+	        score: null,
+	        line: 'Server review is running.',
+	        meta: 'If the server stalls, browser review will continue automatically.',
+	      });
+	    }, 1200);
 	
 	    let response;
 	    try {
@@ -2860,8 +2872,9 @@ class ChessReviewApp {
 	        }),
 	      });
 	    } catch (err) {
+	      clearInterval(progressTimer);
 	      if (err.name === 'AbortError') {
-	        throw new Error('Server review timed out. Falling back to browser review.');
+	        throw new Error('Server review timed out.');
 	      }
 	      throw err;
 	    } finally {
@@ -2869,15 +2882,31 @@ class ChessReviewApp {
 	    }
 
     if (!response.ok) {
+      clearInterval(progressTimer);
       const text = await response.text().catch(() => '');
       throw new Error(text || `Server analysis failed with ${response.status}`);
     }
 
-    this.elProgressFill.style.width = '78%';
-    const data = await response.json();
-    if (!Array.isArray(data.results)) {
-      throw new Error(data.error || 'Server analysis returned no results.');
-    }
+	    this.elProgressFill.style.width = '78%';
+	    let parseTimeout = null;
+	    let data;
+	    try {
+	      data = await Promise.race([
+	        response.json(),
+	        new Promise((_, reject) => {
+	          parseTimeout = setTimeout(() => {
+	            controller.abort();
+	            reject(new Error('Server response timed out.'));
+	          }, 10000);
+	        }),
+	      ]);
+	    } finally {
+	      clearInterval(progressTimer);
+	      if (parseTimeout) clearTimeout(parseTimeout);
+	    }
+	    if (!Array.isArray(data.results)) {
+	      throw new Error(data.error || 'Server analysis returned no results.');
+	    }
 
     this.elProgressFill.style.width = '100%';
     const results = data.results.map((entry) => ({
@@ -3103,8 +3132,9 @@ class ChessReviewApp {
     this.elCriticalMoments.style.display = 'block';
   }
 
-  _resetInsightPanel() {
-    this.elInsightEmpty.style.display = 'block';
+	  _resetInsightPanel() {
+	    if (this.elMoveInsights) this.elMoveInsights.hidden = !this.explorerReturnState;
+	    this.elInsightEmpty.style.display = 'block';
     this.elInsightContent.style.display = 'none';
     this.elInsightMove.textContent = '';
     this.elInsightClass.textContent = '';
@@ -3133,6 +3163,7 @@ class ChessReviewApp {
       return;
     }
 
+    if (this.elMoveInsights) this.elMoveInsights.hidden = false;
     this.elInsightEmpty.style.display = 'none';
     this.elInsightContent.style.display = 'block';
 

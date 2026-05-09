@@ -99,8 +99,9 @@ class UciEngine {
 
   _failActiveSearch(error) {
     if (!this.activeSearch) return;
-    const { handler, timer, reject } = this.activeSearch;
+    const { handler, timer, hardTimer, reject } = this.activeSearch;
     if (timer) clearTimeout(timer);
+    if (hardTimer) clearTimeout(hardTimer);
     this._removeMessageHandler(handler);
     this.activeSearch = null;
     if (reject) reject(error);
@@ -209,6 +210,27 @@ class UciEngine {
     return new Promise((resolve, reject) => {
       let bestInfo = null;
       let timer = null;
+      let hardTimer = null;
+      let settled = false;
+
+      const finish = (bestMove = '') => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (hardTimer) clearTimeout(hardTimer);
+        this._removeMessageHandler(handler);
+        if (this.activeSearch?.handler === handler) {
+          this.activeSearch = null;
+        }
+        resolve({
+          score: bestInfo ? bestInfo.score : 0,
+          scoreType: bestInfo ? bestInfo.scoreType : 'cp',
+          bestMove,
+          pv: bestInfo ? bestInfo.pv : '',
+          depth: bestInfo ? bestInfo.depth : 0,
+          timedOut: !bestMove,
+        });
+      };
 
       const handler = (msg) => {
         if (msg.startsWith('info') && msg.includes('depth')) {
@@ -219,36 +241,28 @@ class UciEngine {
         }
 
         if (msg.startsWith('bestmove')) {
-          if (timer) clearTimeout(timer);
-          const bestMove = msg.split(' ')[1];
-          this._removeMessageHandler(handler);
-          if (this.activeSearch?.handler === handler) {
-            this.activeSearch = null;
-          }
-          resolve({
-            score: bestInfo ? bestInfo.score : 0,
-            scoreType: bestInfo ? bestInfo.scoreType : 'cp',
-            bestMove,
-            pv: bestInfo ? bestInfo.pv : '',
-            depth: bestInfo ? bestInfo.depth : 0,
-          });
+          finish(msg.split(' ')[1] || '');
         }
       };
 
-      timer = setTimeout(() => this._safeStop(), timeoutMs);
+      timer = setTimeout(() => {
+        this._safeStop();
+        hardTimer = setTimeout(() => finish(bestInfo?.pv?.split(/\s+/).filter(Boolean)[0] || ''), 900);
+        if (this.activeSearch?.handler === handler) this.activeSearch.hardTimer = hardTimer;
+      }, timeoutMs);
 
       this._addMessageHandler(handler);
-      this.activeSearch = { handler, timer, reject };
+      this.activeSearch = { handler, timer, hardTimer, reject };
       this._send(`position fen ${fen}`);
       this._send(`go depth ${depth}`);
     });
   }
 
-  async evaluateMultiPV(fen, depth = 18, numPV = 3) {
-    return this._runExclusive(() => this._evaluateMultiPV(fen, depth, numPV));
+  async evaluateMultiPV(fen, depth = 18, numPV = 3, timeoutMs = 20000) {
+    return this._runExclusive(() => this._evaluateMultiPV(fen, depth, numPV, timeoutMs));
   }
 
-  async _evaluateMultiPV(fen, depth = 18, numPV = 3) {
+  async _evaluateMultiPV(fen, depth = 18, numPV = 3, timeoutMs = 20000) {
     if (!this.ready) throw new Error('Engine not ready');
 
     this._cancelActiveSearch();
@@ -261,6 +275,33 @@ class UciEngine {
     return new Promise((resolve, reject) => {
       const pvResults = {};
       let timer = null;
+      let hardTimer = null;
+      let settled = false;
+
+      const finish = (bestMove = '') => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (hardTimer) clearTimeout(hardTimer);
+        this._removeMessageHandler(handler);
+        if (this.activeSearch?.handler === handler) {
+          this.activeSearch = null;
+        }
+        this._send('setoption name MultiPV value 1');
+
+        const results = [];
+        for (let i = 1; i <= numPV; i += 1) {
+          if (pvResults[i]) {
+            results.push(pvResults[i]);
+          }
+        }
+
+        resolve({
+          lines: results,
+          bestMove: bestMove || results[0]?.pv?.split(/\s+/).filter(Boolean)[0] || '',
+          timedOut: !bestMove,
+        });
+      };
 
       const handler = (msg) => {
         if (msg.startsWith('info') && msg.includes('depth') && msg.includes(' pv ')) {
@@ -274,31 +315,18 @@ class UciEngine {
         }
 
         if (msg.startsWith('bestmove')) {
-          if (timer) clearTimeout(timer);
-          this._removeMessageHandler(handler);
-          if (this.activeSearch?.handler === handler) {
-            this.activeSearch = null;
-          }
-          this._send('setoption name MultiPV value 1');
-
-          const results = [];
-          for (let i = 1; i <= numPV; i += 1) {
-            if (pvResults[i]) {
-              results.push(pvResults[i]);
-            }
-          }
-
-          resolve({
-            lines: results,
-            bestMove: msg.split(' ')[1],
-          });
+          finish(msg.split(' ')[1] || '');
         }
       };
 
-      timer = setTimeout(() => this._safeStop(), 20000);
+      timer = setTimeout(() => {
+        this._safeStop();
+        hardTimer = setTimeout(() => finish(), 900);
+        if (this.activeSearch?.handler === handler) this.activeSearch.hardTimer = hardTimer;
+      }, timeoutMs);
 
       this._addMessageHandler(handler);
-      this.activeSearch = { handler, timer, reject };
+      this.activeSearch = { handler, timer, hardTimer, reject };
       this._send(`position fen ${fen}`);
       this._send(`go depth ${depth}`);
     });
@@ -325,8 +353,9 @@ class UciEngine {
 
   _cancelActiveSearch() {
     if (!this.activeSearch) return;
-    const { handler, timer, reject } = this.activeSearch;
+    const { handler, timer, hardTimer, reject } = this.activeSearch;
     if (timer) clearTimeout(timer);
+    if (hardTimer) clearTimeout(hardTimer);
     this._removeMessageHandler(handler);
     this.activeSearch = null;
     if (reject) reject(new Error('Search cancelled'));
