@@ -1308,10 +1308,9 @@ class ChessReviewApp {
 	      this._updateBoard();
 	      this._updateCurrentMoveIndicator();
 	      const previousHumanResult = this.liveMoveResults?.[this.currentMoveIndex - 1];
-	      const feedbackHighlights = this._moveHighlightsForResult(previousHumanResult);
-	      this.board.setHighlights(feedbackHighlights.length > 0
-	        ? feedbackHighlights
-	        : [{ square: move.from, type: 'highlight' }, { square: move.to, type: 'highlight' }]);
+		      const feedbackHighlights = this._moveHighlightsForResult(previousHumanResult);
+		      const coachMoveHighlights = [{ square: move.from, type: 'highlight' }, { square: move.to, type: 'highlight' }];
+		      this.board.setHighlights([...feedbackHighlights, ...coachMoveHighlights]);
       this._renderMoveList();
       this._updateActiveMoveInList();
       this._updateGameStatus();
@@ -1346,7 +1345,8 @@ class ChessReviewApp {
 			    if (['BLUNDER', 'MISTAKE', 'MISS', 'INACCURACY'].includes(key)) {
 			      const reply = result.opponentBestMoveSan || result.opponentBestMove || 'the tactic';
 			      const queenNote = /queen/i.test(result.coachText || '') ? 'This leaves your queen vulnerable.' : 'This is the key moment.';
-			      this._setCoachDialog(`${queenNote} ${result.coachText || ''} The coach response is ${reply}. Use Take Back if you want another try.${adjustNote}`, key);
+			      const replyNote = result.coachText?.includes(reply) ? '' : ` The coach response is ${reply}.`;
+				      this._setCoachDialog(`${queenNote} ${result.coachText || ''}${replyNote} Use Take Back if you want another try.${adjustNote}`, key);
 		      if (result.opponentBestMove) this.board.setBestMoveArrow(result.opponentBestMove, { color: '#CA3431' });
 		      this.coachMode.lastAdviceMoveIndex = result.moveIndex;
 			      if (['BLUNDER', 'MISTAKE'].includes(key)) {
@@ -1372,10 +1372,11 @@ class ChessReviewApp {
 		    const key = result?.classificationKey || 'MISTAKE';
 		    const title = key === 'BLUNDER' ? 'Blunder on the board' : 'Mistake on the board';
 		    const explanation = result?.coachText || `${result?.moveSan || 'That move'} gives the coach a clear reply.`;
+		    const replyNote = explanation.includes(reply) ? '' : ` The coach can answer with ${reply}.`;
 		    const response = await this._showPopup({
 		      icon: key === 'BLUNDER' ? 'error' : 'warning',
 		      title,
-		      text: `${explanation} The coach can answer with ${reply}.`,
+		      text: `${explanation}${replyNote}`,
 		      confirmButtonText: 'Continue',
 		      cancelButtonText: 'Take Back',
 		      showCancelButton: true,

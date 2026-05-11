@@ -91,9 +91,6 @@ class BrowserMoveCoach {
     const key = this.analyzer.getClassificationKey(payload.classification);
     const statements = [this._classificationStatement(key, payload, moveInfo)];
 
-	    statements.push(...this._strategicStatements(payload, moveInfo));
-	    statements.push(...this._tacticalStatements(payload, moveInfo));
-	
 	    const bestMoveIdea = this.analyzer._describeBestMove(payload.fenBefore, payload.bestMove, payload.bestMoveSan);
 	    const opponentReply = this._describeOpponentReply(payload);
 	    const mateTrap = key === 'BRILLIANT'
@@ -105,7 +102,10 @@ class BrowserMoveCoach {
 	        statements.push(opponentReply);
 	      }
       if (payload.bestMoveSan) {
-        statements.push(`The cleaner plan was ${payload.bestMoveSan}${bestMoveIdea ? `: ${bestMoveIdea}.` : '.'}`);
+        const plainBest = bestMoveIdea === `play ${payload.bestMoveSan}` || !bestMoveIdea;
+        statements.push(plainBest
+          ? `Better was ${payload.bestMoveSan}.`
+          : `Better was ${payload.bestMoveSan}: ${bestMoveIdea}.`);
       }
 		    } else if (mateTrap) {
 		      statements.push(`If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; declining it leaves the pressure.`);
@@ -119,6 +119,11 @@ class BrowserMoveCoach {
 		    } else if (payload.bestMoveSan && payload.bestMoveSan !== moveInfo.san && key !== 'BOOK') {
 		      statements.push(`It stays close to the engine's preferred idea, ${payload.bestMoveSan}.`);
 		    }
+
+    if (!['INACCURACY', 'MISTAKE', 'BLUNDER', 'MISS'].includes(key)) {
+      statements.push(...this._strategicStatements(payload, moveInfo));
+      statements.push(...this._tacticalStatements(payload, moveInfo));
+    }
 
     return statements
       .filter(Boolean)
@@ -152,20 +157,20 @@ class BrowserMoveCoach {
 	      ? Math.round(payload.expectedLoss * 100)
 	      : null;
 	    const lossText = epLoss !== null && epLoss > 0
-	      ? `changes the expected result by about ${epLoss} percentage points`
+	      ? `drops your expected result by about ${epLoss} percentage points`
 	      : `gives up about ${Math.round(payload.cpLoss || 0)} centipawns`;
 	    const descriptions = {
-	      BRILLIANT: 'is brilliant because it is a concrete forcing tactic, not just a good trade',
-	      GREAT: 'is a great move because it is hard to replace and keeps the position healthy',
-	      BEST: 'is the best move in the position',
-	      EXCELLENT: 'is excellent and stays very close to the engine line',
-	      GOOD: 'is playable, though there was a cleaner option',
-	      BOOK: 'stays in book',
+	      BRILLIANT: 'is brilliant: the best move, tricky to find, and usually involving a sacrifice',
+	      GREAT: 'is great: it altered the course of the game',
+	      BEST: "is best: the engine's top choice",
+	      EXCELLENT: 'is excellent: almost as good as the best move',
+	      GOOD: 'is good: a decent move, but not the best',
+	      BOOK: 'is book: a conventional opening move',
 	      FORCED: 'was forced by the position',
-	      INACCURACY: 'is an inaccuracy',
-	      MISTAKE: `is a mistake and ${lossText}`,
-	      BLUNDER: `is a blunder and ${lossText}`,
-	      MISS: 'misses a chance to convert the position',
+	      INACCURACY: 'is an inaccuracy: a weak move',
+	      MISTAKE: `is a mistake: a bad move that immediately worsens your position and ${lossText}`,
+	      BLUNDER: `is a blunder: a very bad move that loses material or the game and ${lossText}`,
+	      MISS: 'is a miss: it missed a tactical opportunity or a chance to punish the opponent',
 	    };
     return `${san} ${descriptions[key] || 'is worth reviewing'}.`;
   }
@@ -211,6 +216,7 @@ class BrowserMoveCoach {
   _tacticalStatements(payload, move) {
     const statements = [];
     const piece = this.pieceNames[move.piece] || 'piece';
+    statements.push(...this._tacticLessonsForMove(payload, move));
 
     if (move.captured) {
       statements.push(`It captures a ${this.pieceNames[move.captured] || 'piece'} on ${move.to}.`);
@@ -240,24 +246,176 @@ class BrowserMoveCoach {
     return statements;
   }
 
+  _tacticLessonsForMove(payload, move) {
+    const lessons = [];
+    if (!payload.fenAfter || !move?.to || !move.piece) return lessons;
+
+    const fork = this._forkLesson(payload.fenAfter, move.to, move.color, move.piece, 'This move');
+    if (fork) lessons.push(fork);
+
+    const lineTactic = this._lineTacticLesson(payload.fenAfter, move.to, move.color, move.piece, 'This move');
+    if (lineTactic) lessons.push(lineTactic);
+
+    const discovered = this._discoveredAttackLesson(payload, move);
+    if (discovered) lessons.push(discovered);
+
+    const removal = this._removalOfDefenderLesson(payload, move);
+    if (removal) lessons.push(removal);
+
+    const backRank = this._backRankLesson(payload.fenAfter, move);
+    if (backRank) lessons.push(backRank);
+
+    const loosePiece = this._loosePieceLesson(payload.fenAfter, move.to, move.color, move.piece);
+    if (loosePiece) lessons.push(loosePiece);
+
+    return lessons.slice(0, 2);
+  }
+
+  _forkLesson(fen, square, color, type, prefix = 'This move') {
+    const attacks = this._attackedEnemyPieces(fen, square, color, type);
+    const king = attacks.find((entry) => entry.piece.type === 'k');
+    const targets = attacks
+      .filter((entry) => entry.piece.type !== 'k' && (this.pieceValues[entry.piece.type] || 0) >= 3)
+      .sort((a, b) => (this.pieceValues[b.piece.type] || 0) - (this.pieceValues[a.piece.type] || 0));
+
+    if (king && targets.length > 0) {
+      const target = targets[0];
+      return `${prefix} creates a fork: it checks the king and attacks the ${this.pieceNames[target.piece.type]} on ${target.square}.`;
+    }
+
+    if (targets.length >= 2) {
+      const first = targets[0];
+      const second = targets[1];
+      return `${prefix} creates a fork: the ${this.pieceNames[type] || 'piece'} attacks the ${this.pieceNames[first.piece.type]} on ${first.square} and the ${this.pieceNames[second.piece.type]} on ${second.square}.`;
+    }
+
+    return '';
+  }
+
+  _lineTacticLesson(fen, square, color, type, prefix = 'This move') {
+    const directions = this._lineDirections(type);
+    if (directions.length === 0) return '';
+
+    const board = this._boardMap(fen);
+    const file = square.charCodeAt(0) - 97;
+    const rank = parseInt(square[1], 10) - 1;
+
+    for (const [df, dr] of directions) {
+      let front = null;
+      for (let f = file + df, r = rank + dr; f >= 0 && f <= 7 && r >= 0 && r <= 7; f += df, r += dr) {
+        const targetSquare = String.fromCharCode(97 + f) + (r + 1);
+        const piece = board[targetSquare];
+        if (!piece) continue;
+
+        if (!front) {
+          if (piece.color === color) break;
+          front = { square: targetSquare, piece };
+          continue;
+        }
+
+        if (piece.color !== color) {
+          const frontName = this.pieceNames[front.piece.type] || 'piece';
+          const backName = this.pieceNames[piece.type] || 'piece';
+          const frontValue = this.pieceValues[front.piece.type] || 0;
+          const backValue = this.pieceValues[piece.type] || 0;
+
+          if (piece.type === 'k') {
+            return `${prefix} creates a pin: the ${frontName} on ${front.square} is stuck in front of the king.`;
+          }
+
+          if (backValue > frontValue && backValue >= 5) {
+            return `${prefix} creates a relative pin: moving the ${frontName} on ${front.square} would expose the ${backName} on ${targetSquare}.`;
+          }
+
+          if ((front.piece.type === 'k' || frontValue > backValue) && frontValue >= 5) {
+            return `${prefix} creates a skewer: the ${frontName} on ${front.square} must deal with the attack, exposing the ${backName} behind it.`;
+          }
+        }
+        break;
+      }
+    }
+
+    return '';
+  }
+
+  _discoveredAttackLesson(payload, move) {
+    if (!payload.fenBefore || !payload.fenAfter || !move?.from) return '';
+    const after = this._boardMap(payload.fenAfter);
+    for (const [from, piece] of Object.entries(after)) {
+      if (piece.color !== move.color || !['b', 'r', 'q'].includes(piece.type) || from === move.to) continue;
+      const attacks = this._attackedEnemyPieces(payload.fenAfter, from, piece.color, piece.type)
+        .filter((entry) => entry.piece.type !== 'k' && (this.pieceValues[entry.piece.type] || 0) >= 3);
+      for (const target of attacks) {
+        if (this._squaresBetween(from, target.square).includes(move.from)) {
+          return `This is a discovered attack: moving the ${this.pieceNames[move.piece] || 'piece'} opens the ${this.pieceNames[piece.type]} on ${from} toward the ${this.pieceNames[target.piece.type]} on ${target.square}.`;
+        }
+      }
+    }
+    return '';
+  }
+
+  _removalOfDefenderLesson(payload, move) {
+    if (!payload.fenBefore || !payload.fenAfter || !move?.captured || !move.to) return '';
+    const before = new Chess(payload.fenBefore);
+    const capturedDefender = before.get(move.to);
+    if (!capturedDefender) return '';
+
+    const after = this._boardMap(payload.fenAfter);
+    const defendedTargets = Object.entries(after)
+      .filter(([, piece]) => piece.color === capturedDefender.color && piece.type !== 'k' && (this.pieceValues[piece.type] || 0) >= 3)
+      .map(([square, piece]) => ({ square, piece }))
+      .filter((entry) => this._attacksFrom(payload.fenBefore, move.to, capturedDefender.color, capturedDefender.type).includes(entry.square))
+      .filter((entry) => this._attacksFrom(payload.fenAfter, move.to, move.color, move.piece).includes(entry.square));
+
+    if (defendedTargets.length === 0) return '';
+    const target = defendedTargets.sort((a, b) => (this.pieceValues[b.piece.type] || 0) - (this.pieceValues[a.piece.type] || 0))[0];
+    return `Tactical theme: removal of the defender. Capturing the ${this.pieceNames[capturedDefender.type] || 'piece'} also weakens the ${this.pieceNames[target.piece.type]} on ${target.square}.`;
+  }
+
+  _backRankLesson(fenAfter, move) {
+    if (!fenAfter || !/[+#]$/.test(move?.san || '')) return '';
+    const board = new Chess(fenAfter);
+    if (!board.in_check()) return '';
+    const opponent = move.color === 'w' ? 'b' : 'w';
+    const kingSquare = this._kingSquare(fenAfter, opponent);
+    const homeRank = opponent === 'w' ? '1' : '8';
+    if (!kingSquare || kingSquare[1] !== homeRank) return '';
+
+    const kingMoves = board.moves({ verbose: true })
+      .filter((candidate) => candidate.piece === 'k');
+    if (kingMoves.length > 1) return '';
+    return 'Tactical theme: back-rank pressure. The king is stuck near its home rank, so checks become more dangerous.';
+  }
+
+  _loosePieceLesson(fen, square, color, type) {
+    const target = this._attackedEnemyPieces(fen, square, color, type)
+      .filter((entry) => entry.piece.type !== 'k' && (this.pieceValues[entry.piece.type] || 0) >= 3)
+      .find((entry) => !this._isDefended(fen, entry.square, entry.piece.color));
+    if (!target) return '';
+    return `Tactical theme: the ${this.pieceNames[target.piece.type]} on ${target.square} is loose, meaning it is not defended.`;
+  }
+
 	  _describeOpponentReply(payload) {
 	    const replyMove = payload.opponentBestMove || payload.replyMove;
 	    if (!payload.fenAfter || !replyMove || replyMove.length < 4) return '';
 
-    const chess = new Chess(payload.fenAfter);
-    const reply = chess.move({
-      from: replyMove.slice(0, 2),
-      to: replyMove.slice(2, 4),
-      promotion: replyMove[4],
-	    });
-	    if (!reply) return '';
+	    const chess = new Chess(payload.fenAfter);
+	    const reply = chess.move({
+	      from: replyMove.slice(0, 2),
+	      to: replyMove.slice(2, 4),
+	      promotion: replyMove[4],
+		    });
+		    if (!reply) return '';
 
-	    if ((reply.san || '').endsWith('#')) {
-	      return `The immediate problem is ${reply.san}: it is checkmate.`;
-	    }
-	
-	    const replyFen = chess.fen();
-    const attacks = this._attacksFrom(replyFen, reply.to, reply.color, reply.piece);
+		    if ((reply.san || '').endsWith('#')) {
+		      return `The immediate problem is ${reply.san}: it is checkmate.`;
+		    }
+
+    const tradeContext = this._replyTradeContext(payload, reply);
+    if (tradeContext) return tradeContext;
+		
+		    const replyFen = chess.fen();
+	    const attacks = this._attacksFrom(replyFen, reply.to, reply.color, reply.piece);
     const targets = attacks
       .map((square) => ({ square, piece: this._pieceAt(replyFen, square) }))
       .filter((entry) => entry.piece && entry.piece.color !== reply.color);
@@ -279,11 +437,47 @@ class BrowserMoveCoach {
       threats.push(`wins the ${this.pieceNames[reply.captured] || 'piece'} on ${reply.to}`);
     }
 
-    if (threats.length === 0) {
-      return `The engine's immediate reply is ${reply.san}.`;
-    }
+		    if (check && highValueTarget && reply.piece === 'q') {
+		      return `The queen can fork you with ${reply.san}: it checks your king and attacks the ${this.pieceNames[highValueTarget.piece.type]} on ${highValueTarget.square}.`;
+		    }
+
+		    if (check && highValueTarget) {
+		      return `${reply.san} is a fork: it checks your king and attacks the ${this.pieceNames[highValueTarget.piece.type]} on ${highValueTarget.square}.`;
+		    }
+
+    const replyLineTactic = this._lineTacticLesson(replyFen, reply.to, reply.color, reply.piece, `The reply ${reply.san}`);
+    if (replyLineTactic) return replyLineTactic;
+
+		    if (threats.length === 0) {
+		      return `The engine's immediate reply is ${reply.san}.`;
+	    }
 
     return `The immediate problem is ${reply.san}: it ${threats.join(' and ')}.`;
+  }
+
+  _replyTradeContext(payload, reply) {
+    if (!reply?.captured || !payload?.fenBefore) return '';
+    const before = new Chess(payload.fenBefore);
+    const playerMove = payload.moveUci
+      ? before.move({
+          from: payload.moveUci.slice(0, 2),
+          to: payload.moveUci.slice(2, 4),
+          promotion: payload.moveUci[4],
+        })
+      : before.move(payload.moveSan, { sloppy: true });
+    if (!playerMove?.captured) return '';
+    if (reply.to !== playerMove.to || reply.captured !== playerMove.piece) return '';
+
+    const capturedValue = this.pieceValues[playerMove.captured] || 0;
+    const recapturedValue = this.pieceValues[reply.captured] || 0;
+    const won = this.pieceNames[playerMove.captured] || 'piece';
+    const lost = this.pieceNames[reply.captured] || 'piece';
+
+    if (capturedValue >= recapturedValue) {
+      return `${reply.san} recaptures your ${lost} on ${reply.to}, so this is a ${won}-for-${lost} trade, not a clean material loss. Tactic lesson: count the full exchange sequence; the issue is that the resulting position is worse than the best line.`;
+    }
+
+    return `${reply.san} recaptures your ${lost} on ${reply.to}; after the trade, you come out down material.`;
   }
 
   _isBackRank(square, color) {
@@ -295,16 +489,62 @@ class BrowserMoveCoach {
     return chess.get(square);
   }
 
-  _isDefended(fen, square, color) {
-    const board = this._boardMap(fen);
-    for (const [from, piece] of Object.entries(board)) {
-      if (piece.color !== color || from === square) continue;
-      if (this._attacksFrom(fen, from, piece.color, piece.type).includes(square)) return true;
-    }
-    return false;
+	  _isDefended(fen, square, color) {
+	    const board = this._boardMap(fen);
+	    for (const [from, piece] of Object.entries(board)) {
+	      if (piece.color !== color || from === square) continue;
+	      if (this._attacksFrom(fen, from, piece.color, piece.type).includes(square)) return true;
+	    }
+	    return false;
+	  }
+
+  _attackedEnemyPieces(fen, square, color, type) {
+    return this._attacksFrom(fen, square, color, type)
+      .map((targetSquare) => ({ square: targetSquare, piece: this._pieceAt(fen, targetSquare) }))
+      .filter((entry) => entry.piece && entry.piece.color !== color);
   }
 
-  _opensHomeDiagonal(fenBefore, move) {
+  _lineDirections(type) {
+    if (type === 'b') return [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+    if (type === 'r') return [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    if (type === 'q') return [[1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]];
+    return [];
+  }
+
+  _squaresBetween(from, to) {
+    if (!from || !to || from === to) return [];
+    const fromFile = from.charCodeAt(0) - 97;
+    const fromRank = Number(from[1]) - 1;
+    const toFile = to.charCodeAt(0) - 97;
+    const toRank = Number(to[1]) - 1;
+    const df = Math.sign(toFile - fromFile);
+    const dr = Math.sign(toRank - fromRank);
+
+    if (fromFile !== toFile && fromRank !== toRank && Math.abs(toFile - fromFile) !== Math.abs(toRank - fromRank)) {
+      return [];
+    }
+
+    const squares = [];
+    for (let f = fromFile + df, r = fromRank + dr; f !== toFile || r !== toRank; f += df, r += dr) {
+      if (f < 0 || f > 7 || r < 0 || r > 7) return [];
+      squares.push(String.fromCharCode(97 + f) + (r + 1));
+    }
+    return squares;
+  }
+
+  _kingSquare(fen, color) {
+    const chess = new Chess(fen);
+    for (const file of 'abcdefgh') {
+      for (const rank of '12345678') {
+        const square = file + rank;
+        const piece = chess.get(square);
+        if (piece && piece.type === 'k' && piece.color === color) return square;
+      }
+    }
+    return '';
+  }
+
+	  _opensHomeDiagonal(fenBefore, move) {
     if (!move.from || move.piece !== 'p') return false;
     const homeDiagonals = {
       d2: ['c1'],
@@ -593,10 +833,24 @@ class MoveAnalyzer {
       return `the ${this._pieceName(bestCapture.piece)} can take your ${this._pieceName(bestCapture.captured)} on ${bestCapture.to}`;
     }
 
-    const checkingMove = legalMoves.find((move) => /\+$/.test(move.san));
-    if (checkingMove) {
-      return `the opponent has the checking move ${checkingMove.san}`;
-    }
+	    const checkingMove = legalMoves.find((move) => /\+$/.test(move.san));
+	    if (checkingMove) {
+	      const played = chess.move(checkingMove.san);
+	      const replyFen = played ? chess.fen() : '';
+	      const attacks = played ? this._attacksFrom(replyFen, played.to, played.color, played.piece) : [];
+	      const target = attacks
+	        .map((square) => ({ square, piece: this._pieceAt(replyFen, square) }))
+	        .filter((entry) => entry.piece && entry.piece.color !== played.color && entry.piece.type !== 'k')
+	        .sort((a, b) => (pieceValue[b.piece.type] || 0) - (pieceValue[a.piece.type] || 0))[0];
+	      if (played) chess.undo();
+	      if (target && checkingMove.piece === 'q') {
+	        return `the queen can fork you with ${checkingMove.san}, checking your king and attacking the ${this._pieceName(target.piece.type)} on ${target.square}`;
+	      }
+	      if (target) {
+	        return `${checkingMove.san} is a fork, checking your king and attacking the ${this._pieceName(target.piece.type)} on ${target.square}`;
+	      }
+	      return `the opponent has the checking move ${checkingMove.san}`;
+	    }
 
     return '';
   }
@@ -633,10 +887,13 @@ class MoveAnalyzer {
 			    const nearlyBest = isBestMove || cpLoss <= 18 || expectedLoss <= 0.012;
 		    const positionAfterOk = playerEdgeAfter > -120 && this.expectedPoints(playerEdgeAfter, playerRating) >= 0.38;
 		    const wasAlreadyCrushing = this.expectedPoints(playerEdgeBefore, playerRating) >= 0.9 && !opponentJustBlundered;
-			    const materialOffer = this._materialOfferAfterMove(fenBefore, moveSan);
-			    const kingPressureOffer = !!materialOffer && this._kingPressureMove(fenBefore, moveSan);
-			    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan) || kingPressureOffer;
-			    const ordinaryCaptureTrade = this._ordinaryCaptureTrade(fenBefore, moveSan);
+				    const materialOffer = this._materialOfferAfterMove(fenBefore, moveSan);
+				    const kingPressureOffer = !!materialOffer && this._kingPressureMove(fenBefore, moveSan);
+				    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan) || kingPressureOffer;
+				    const ordinaryCaptureTrade = this._ordinaryCaptureTrade(fenBefore, moveSan);
+				    const losesMaterialOrGame = !!opponentMateAfter
+				      || playerEdgeAfter <= -9000
+				      || this._opponentMaterialTacticAfter(fenBefore, moveSan);
 		
 		    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
 			    const bestAttackingOffer = goodPieceSacrifice
@@ -716,10 +973,11 @@ class MoveAnalyzer {
 	      isCheckmate,
 	    });
 
-		    if (expectedLoss > 0.20 * tolerance || effectiveCpLoss >= 320 * tolerance) {
-		      return losingOnOpponentMove ? MoveClassification.BLUNDER : MoveClassification.MISTAKE;
-		    }
-	    if (expectedLoss > 0.10 * tolerance || effectiveCpLoss >= 155 * tolerance) return MoveClassification.MISTAKE;
+			    if (expectedLoss > 0.20 * tolerance || effectiveCpLoss >= 320 * tolerance) {
+			      return (losingOnOpponentMove && losesMaterialOrGame) ? MoveClassification.BLUNDER : MoveClassification.MISTAKE;
+			    }
+			    if (losesMaterialOrGame && (expectedLoss > 0.14 * tolerance || effectiveCpLoss >= 220 * tolerance)) return MoveClassification.BLUNDER;
+		    if (expectedLoss > 0.10 * tolerance || effectiveCpLoss >= 155 * tolerance) return MoveClassification.MISTAKE;
 	    if (expectedLoss > 0.05 * tolerance || effectiveCpLoss >= 70 * tolerance) return MoveClassification.INACCURACY;
 
 	    const wasCloseGame = Math.abs(scoreBefore) < 180;
@@ -736,12 +994,17 @@ class MoveAnalyzer {
 	      return MoveClassification.BRILLIANT;
 	    }
 	
-		    const losingToEqual = beforeExpected <= 0.32 && afterExpected >= 0.45;
-		    const equalToWinning = beforeExpected >= 0.38 && beforeExpected <= 0.62 && afterExpected >= 0.72;
-		    const onlyGoodMove = nearlyBest && uniqueBest && gapToSecond >= 140;
-		    if (isBestMove && (onlyGoodMove || losingToEqual || equalToWinning)) {
-		      return MoveClassification.GREAT;
-		    }
+			    const rescueOrConversion = (beforeExpected <= 0.34 && afterExpected >= 0.45)
+			      || (beforeExpected >= 0.38 && beforeExpected <= 0.62 && afterExpected >= 0.72);
+			    const courseChangingOnlyMove = nearlyBest
+			      && gapToSecond >= 240
+			      && !wasAlreadyCrushing
+			      && beforeExpected >= 0.28
+			      && beforeExpected <= 0.82
+			      && (opponentJustBlundered || gapToSecond >= 320 || rescueOrConversion);
+			    if (isBestMove && !goodPieceSacrifice && (courseChangingOnlyMove || rescueOrConversion)) {
+			      return MoveClassification.GREAT;
+			    }
 	
 	    if (isBestMove || expectedLoss <= 0.003 || effectiveCpLoss <= 8) {
 	      return MoveClassification.BEST;
@@ -804,7 +1067,40 @@ class MoveAnalyzer {
 		    return replyCaptures.length > 0 || capturedValue === movedValue;
 		  }
 
-		  _kingPressureMove(fenBefore, moveSan) {
+		  _opponentMaterialTacticAfter(fenBefore, moveSan) {
+		    if (!fenBefore || !moveSan) return false;
+		    const board = new Chess(fenBefore);
+		    const moveObj = board.move(moveSan, { sloppy: true });
+		    if (!moveObj || board.in_checkmate()) return false;
+
+		    const value = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+		    const legalReplies = board.moves({ verbose: true });
+		    for (const reply of legalReplies) {
+		      if (/#$/.test(reply.san || '')) return true;
+		      const equalOrBetterTradeRecapture = moveObj.captured
+		        && reply.to === moveObj.to
+		        && reply.captured === moveObj.piece
+		        && (value[moveObj.captured] || 0) >= (value[reply.captured] || 0);
+		      if (equalOrBetterTradeRecapture) continue;
+		      if (reply.captured) {
+		        const attackerValue = reply.piece === 'k' ? (value[reply.captured] || 0) : (value[reply.piece] || 0);
+		        if ((value[reply.captured] || 0) - attackerValue >= 1) return true;
+		      }
+
+		      const givesCheck = /[+#]$/.test(reply.san || '');
+		      const played = board.move(reply.san);
+		      if (!played) continue;
+		      const attacks = this._attacksFrom(board.fen(), played.to, played.color, played.piece)
+		        .map((square) => ({ square, piece: this._pieceAt(board.fen(), square) }))
+		        .filter((entry) => entry.piece && entry.piece.color !== played.color && entry.piece.type !== 'k');
+		      board.undo();
+
+		      if (givesCheck && attacks.some((entry) => (value[entry.piece.type] || 0) >= 3)) return true;
+		    }
+		    return false;
+		  }
+
+			  _kingPressureMove(fenBefore, moveSan) {
 		    if (!fenBefore || !moveSan) return false;
 		    const board = new Chess(fenBefore);
 		    const moveObj = board.move(moveSan, { sloppy: true });
@@ -1122,10 +1418,16 @@ class MoveAnalyzer {
 	      if (move.mateThreat) add('mate-threats', 'You often allow direct mate threats.');
 	      if ((move.planTags || []).includes('Trade') && move.playerEdgeBefore > 180) add('trading-up', 'You sometimes trade while already attacking or converting.');
 	      if ((move.planTags || []).includes('Development') && move.movePly > 16) add('late-development', 'Development problems are lasting past the opening.');
-	      if ((move.planTags || []).includes('Pawn break')) add('pawn-breaks', 'Pawn breaks need more calculation before release.');
-	      if (move.phase === 'Endgame') add('endgame', 'Endgame technique is costing practical chances.');
-	      if (/queen/i.test(move.coachText || '')) add('queen-safety', 'Queen safety is a recurring tactical issue.');
-	    }
+		      if ((move.planTags || []).includes('Pawn break')) add('pawn-breaks', 'Pawn breaks need more calculation before release.');
+		      if (move.phase === 'Endgame') add('endgame', 'Endgame technique is costing practical chances.');
+		      if (/queen/i.test(move.coachText || '')) add('queen-safety', 'Queen safety is a recurring tactical issue.');
+		      if (/fork/i.test(move.coachText || '')) add('forks', 'Forks are deciding several positions: watch for checks that also attack pieces.');
+		      if (/pin/i.test(move.coachText || '')) add('pins', 'Pins are recurring: notice pieces that cannot move without exposing something valuable.');
+		      if (/skewer/i.test(move.coachText || '')) add('skewers', 'Skewers are appearing: high-value pieces can be driven away from pieces behind them.');
+		      if (/discovered attack/i.test(move.coachText || '')) add('discovered-attacks', 'Discovered attacks are important: moving one piece can open a line for another.');
+		      if (/loose/i.test(move.coachText || '')) add('loose-pieces', 'Loose pieces are a pattern: undefended pieces become tactical targets.');
+		      if (/back-rank/i.test(move.coachText || '')) add('back-rank', 'Back-rank pressure matters: king safety and escape squares need attention.');
+		    }
 	    return [...patterns.values()].sort((a, b) => b.count - a.count).slice(0, 5);
 	  }
 
@@ -1178,17 +1480,17 @@ class MoveAnalyzer {
 		      }
 		      return `${moveSan} is brilliant. You found the only real tactical idea and kept the attack alive.`;
 		    }
-    if (key === 'GREAT') {
-      return `${moveSan} is great. The other moves slip, and this one keeps the pressure on.`;
-    }
-    if (key === 'BEST') {
-      return `${moveSan} is the best move and keeps the position on track.`;
-    }
-    if (key === 'EXCELLENT') {
-      return `${moveSan} is excellent. It's very close to the engine line, with only a tiny difference.`;
-    }
-    if (key === 'GOOD') {
-      return `${moveSan} is fine, but ${bestMoveSan || 'the best move'} was a little cleaner.`;
+	    if (key === 'GREAT') {
+	      return `${moveSan} is great. It altered the course of the game; alternatives would have let the position slip.`;
+	    }
+	    if (key === 'BEST') {
+	      return `${moveSan} is best. It is the engine's top choice.`;
+	    }
+	    if (key === 'EXCELLENT') {
+	      return `${moveSan} is excellent. It is almost as good as the best move.`;
+	    }
+	    if (key === 'GOOD') {
+	      return `${moveSan} is good. It is decent, but ${bestMoveSan || 'the best move'} was cleaner.`;
     }
     if (key === 'BOOK') {
       return `${moveSan} stays in book.`;
@@ -1196,16 +1498,16 @@ class MoveAnalyzer {
     if (key === 'FORCED') {
       return `${moveSan} was forced in this position.`;
     }
-    if (key === 'INACCURACY') {
-      if (punishText) {
-        return `${moveSan} is an inaccuracy because ${punishText}. ${bestMoveSan || 'The best move'} kept things under control.`;
-      }
-      return `${moveSan} is an inaccuracy. ${bestMoveSan || 'The best move'} kept a healthier edge.`;
-    }
-	    if (key === 'MISTAKE') {
+	    if (key === 'INACCURACY') {
 	      if (punishText) {
-	        return `${moveSan} is a mistake because ${punishText}. ${bestMoveSan || 'The best move'} was needed here.`;
+	        return `${moveSan} is an inaccuracy, a weak move because ${punishText}. ${bestMoveSan || 'The best move'} kept things under control.`;
 	      }
+	      return `${moveSan} is an inaccuracy. It is weak, and ${bestMoveSan || 'the best move'} kept a healthier edge.`;
+	    }
+		    if (key === 'MISTAKE') {
+		      if (punishText) {
+		        return `${moveSan} is a mistake because ${punishText}. ${bestMoveSan || 'The best move'} was needed here.`;
+		      }
 	      const lossText = typeof expectedLoss === 'number' && expectedLoss > 0
 	        ? `changes the expected result by about ${Math.round(expectedLoss * 100)} percentage points`
 	        : `gives up around ${Math.round(cpLoss)} cp`;
@@ -1223,9 +1525,9 @@ class MoveAnalyzer {
       }
       return `${moveSan} is a miss. ${bestMoveSan || 'The best move'} would have kept the winning chances alive.`;
     }
-	    if (punishText) {
-	      return `${moveSan} is a blunder because ${punishText}. ${bestMoveSan || 'Best move'} was critical here.`;
-	    }
+		    if (punishText) {
+		      return `${moveSan} is a blunder because ${punishText}. ${bestMoveSan || 'Best move'} was critical here.`;
+		    }
 	    const lossText = typeof expectedLoss === 'number' && expectedLoss > 0
 	      ? `changes the expected result by about ${Math.round(expectedLoss * 100)} percentage points`
 	      : `drops about ${Math.round(cpLoss)} cp`;
