@@ -28,8 +28,8 @@ exports.handler = async (event) => {
 	  if (moves.length > 120) {
 	    return json(413, { error: 'Server review is capped at 120 plies. Use browser review for longer games.' });
 	  }
-	  if (positions.length > 32) {
-	    return json(413, { error: 'Server eval chunks are capped at 32 positions.' });
+	  if (positions.length > 8) {
+	    return json(413, { error: 'Server eval chunks are capped at 8 positions.' });
 	  }
 	
 	  const Chess = loadChess();
@@ -37,12 +37,13 @@ exports.handler = async (event) => {
 		  const analyzer = new MoveAnalyzer();
 		  const profile = payload.profile || {};
 		  const workSize = positions.length || moves.length;
-		  const maxDepth = workSize > 80 ? 6 : workSize > 50 ? 8 : positions.length ? 8 : 14;
-		  const maxTimeout = workSize > 80 ? 450 : workSize > 50 ? 700 : positions.length ? 900 : 9000;
+		  const maxDepth = positions.length ? 14 : workSize > 80 ? 6 : workSize > 50 ? 8 : 14;
+		  const minDepth = positions.length ? 8 : 6;
+		  const maxTimeout = positions.length ? 1400 : workSize > 80 ? 450 : workSize > 50 ? 700 : 9000;
 		  analyzer.setReviewProfile({
-		    depth: Math.max(6, Math.min(Number(profile.depth) || maxDepth, maxDepth)),
-		    multiPv: Math.max(1, Math.min(Number(profile.multiPv) || 2, 3)),
-		    timeoutMs: Math.max(180, Math.min(Number(profile.timeoutMs) || maxTimeout, maxTimeout)),
+		    depth: Math.max(minDepth, Math.min(Number(profile.depth) || maxDepth, maxDepth)),
+		    multiPv: Math.max(1, Math.min(Number(profile.multiPv) || 1, positions.length ? 1 : 3)),
+		    timeoutMs: Math.max(120, Math.min(Number(profile.timeoutMs) || maxTimeout, maxTimeout)),
 		  });
 
   const initialFen = payload.initialFen || payload.headers?.FEN || undefined;

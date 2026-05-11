@@ -92,7 +92,7 @@ class ServerStockfishEngine {
   async configure() {
     this._cancelActiveSearch();
     this._send('stop');
-	    this._send('setoption name Hash value 32');
+	    this._send('setoption name Hash value 8');
 	    this._send('setoption name Threads value 1');
 	    this._send('setoption name MultiPV value 1');
 	    this.currentMultiPv = 1;
