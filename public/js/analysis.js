@@ -115,12 +115,15 @@ class BrowserMoveCoach {
 		        statements.push(`If ${drawResource.captureSan} accepts the sacrifice, the result is drawn. This is a defensive resource, not an attacking bait.`);
 		      }
 		      const offer = this.analyzer._materialOfferAfterMove(payload.fenBefore, payload.moveSan);
-		      if (offer && !drawResource) {
-		        const offered = this.pieceNames[offer.captured] || 'piece';
-		        const grab = offer.san ? `${offer.san}` : `a capture on ${offer.to}`;
-		        statements.push(`It invites ${grab}, but the ${offered} is bait for the attack.`);
-		      }
-		    } else if (payload.bestMoveSan && payload.bestMoveSan !== moveInfo.san && key !== 'BOOK') {
+			      if (offer && !drawResource) {
+			        const offered = this.pieceNames[offer.captured] || 'piece';
+			        const grab = offer.san ? `${offer.san}` : `a capture on ${offer.to}`;
+			        statements.push(`It invites ${grab}, but the ${offered} is bait for the attack.`);
+			      }
+			      if (/[+#]/.test(moveInfo.san || payload.moveSan || '')) {
+			        statements.push('Because it is check, the opponent has to answer your threat before they can untangle.');
+			      }
+			    } else if (payload.bestMoveSan && payload.bestMoveSan !== moveInfo.san && key !== 'BOOK') {
 		      statements.push(`It stays close to the engine's preferred idea, ${payload.bestMoveSan}.`);
 		    }
 
@@ -166,8 +169,11 @@ class BrowserMoveCoach {
 	    const lossText = epLoss !== null && epLoss > 0
 	      ? `drops your expected result by about ${epLoss} percentage points`
 	      : `gives up about ${Math.round(payload.cpLoss || 0)} centipawns`;
-	    const descriptions = {
-	      BRILLIANT: 'is brilliant: the best move, tricky to find, and usually involving a sacrifice',
+		    const brilliantText = /[+#]/.test(move.san || san)
+		      ? 'is brilliant: a forcing check that is hard to find and keeps the attack in your hands'
+		      : 'is brilliant: the best move, tricky to find, and usually involving a sacrifice';
+		    const descriptions = {
+		      BRILLIANT: brilliantText,
 	      GREAT: 'is great: it altered the course of the game',
 	      BEST: "is best: the engine's top choice",
 	      EXCELLENT: 'is excellent: almost as good as the best move',

@@ -302,12 +302,23 @@ class ChessReviewApp {
 		    }
 		  }
 
-		  _brilliantMoveKeys(results = this.analysisResults) {
-		    if (!Array.isArray(results)) return [];
-		    return results
-		      .filter((entry) => entry?.classificationKey === 'BRILLIANT' && entry.fen && entry.moveUci)
-		      .map((entry) => `${String(entry.fen).split(/\s+/).slice(0, 4).join(' ')}|${entry.moveUci}`);
-		  }
+	  _brilliantMoveKeys(results = this.analysisResults) {
+	    if (!Array.isArray(results)) return [];
+	    return results
+	      .filter((entry) => entry?.classificationKey === 'BRILLIANT' && entry.fen && entry.moveUci)
+	      .map((entry) => this._brilliantMoveKey(entry));
+	  }
+
+	  _brilliantMoveKey(entry) {
+	    if (!entry?.fen || !entry?.moveUci) return '';
+	    return `${String(entry.fen).split(/\s+/).slice(0, 4).join(' ')}|${entry.moveUci}`;
+	  }
+
+	  _recordBrilliantMove(result) {
+	    if (result?.classificationKey !== 'BRILLIANT') return;
+	    const brilliantMoveKey = this._brilliantMoveKey(result);
+	    if (brilliantMoveKey) this._recordPublicStatEvent('brilliant_move', { brilliantMoveKey });
+	  }
 
 				  _bindEvents() {
     this.elBtnMenuImport?.addEventListener('click', () => this._showEngineChoiceModal('import'));
@@ -1136,23 +1147,48 @@ class ChessReviewApp {
 	    return `rgb(${mix(from.r, to.r)}, ${mix(from.g, to.g)}, ${mix(from.b, to.b)})`;
 	  }
 
-	  _moveHighlightsForResult(result) {
-	    if (!result || result.isCoachMove || !result.moveUci || result.moveUci.length < 4) return [];
-	    return [
-	      {
-	        square: result.moveUci.substring(0, 2),
-	        type: 'highlight',
-	        color: this._mixColor(result.classification?.color, '#ffffff', 0.72),
-	        ringColor: result.classification?.color,
-	      },
-	      {
-	        square: result.moveUci.substring(2, 4),
-	        type: 'highlight',
-	        color: this._mixColor(result.classification?.color, '#ffffff', 0.72),
-	        ringColor: result.classification?.color,
-	      },
-	    ];
-	  }
+		  _moveHighlightsForSquares(from, to, options = {}) {
+		    if (!from || !to) return [];
+		    const ringColor = options.ringColor || '#2F6F9F';
+		    const color = options.color || this._mixColor(ringColor, '#ffffff', 0.72);
+		    return [
+		      { square: from, type: options.type || 'highlight', color, ringColor },
+		      { square: to, type: options.type || 'highlight', color, ringColor },
+		    ];
+		  }
+
+		  _isCoachGame() {
+		    return String(this.gameHeaders?.Event || '').toLowerCase() === 'coach';
+		  }
+
+		  _coachHumanColorFromHeaders(headers = this.gameHeaders || {}) {
+		    if (String(headers.White || '').trim().toLowerCase() === 'you') return 'w';
+		    if (String(headers.Black || '').trim().toLowerCase() === 'you') return 'b';
+		    return this.coachMode?.humanColor || null;
+		  }
+
+		  _isCoachMoveIndex(index) {
+		    if (index < 0 || !this._isCoachGame()) return false;
+		    const humanColor = this._coachHumanColorFromHeaders();
+		    if (!humanColor) return false;
+		    const movingColor = index % 2 === 0 ? 'w' : 'b';
+		    return movingColor !== humanColor;
+		  }
+
+		  _moveHighlightsForResult(result, index = result?.moveIndex) {
+		    if (!result || !result.moveUci || result.moveUci.length < 4) return [];
+		    const isCoachMove = result.isCoachMove || this._isCoachMoveIndex(index);
+		    if (isCoachMove) {
+		      return this._moveHighlightsForSquares(result.moveUci.substring(0, 2), result.moveUci.substring(2, 4), {
+		        color: '#D9ECFF',
+		        ringColor: '#2F6F9F',
+		      });
+		    }
+		    return this._moveHighlightsForSquares(result.moveUci.substring(0, 2), result.moveUci.substring(2, 4), {
+		      color: this._mixColor(result.classification?.color, '#ffffff', 0.72),
+		      ringColor: result.classification?.color,
+		    });
+		  }
 
 	  _setBoardOrientationForColor(color) {
 	    const shouldFlip = color === 'b';
@@ -1375,7 +1411,10 @@ class ChessReviewApp {
 	      this._updateCurrentMoveIndicator();
 	      const previousHumanResult = this.liveMoveResults?.[this.currentMoveIndex - 1];
 		      const feedbackHighlights = this._moveHighlightsForResult(previousHumanResult);
-		      const coachMoveHighlights = [{ square: move.from, type: 'highlight' }, { square: move.to, type: 'highlight' }];
+		      const coachMoveHighlights = this._moveHighlightsForSquares(move.from, move.to, {
+		        color: '#D9ECFF',
+		        ringColor: '#2F6F9F',
+		      });
 		      this.board.setHighlights([...feedbackHighlights, ...coachMoveHighlights]);
       this._renderMoveList();
       this._updateActiveMoveInList();
@@ -1406,9 +1445,10 @@ class ChessReviewApp {
 	    const result = await liveResultPromise.catch(() => null);
 	    if (!this.coachMode.active) return;
 	
-		    const key = result?.classificationKey || '';
-		    const adjustNote = this._adjustCoachSkillFromResult(result);
-			    if (['BLUNDER', 'MISTAKE', 'MISS', 'INACCURACY'].includes(key)) {
+			    const key = result?.classificationKey || '';
+			    const adjustNote = this._adjustCoachSkillFromResult(result);
+			    if (key === 'BRILLIANT') this._recordBrilliantMove(result);
+				    if (['BLUNDER', 'MISTAKE', 'MISS', 'INACCURACY'].includes(key)) {
 			      const reply = result.opponentBestMoveSan || result.opponentBestMove || 'the tactic';
 			      const queenNote = /queen/i.test(result.coachText || '') ? 'This leaves your queen vulnerable.' : 'This is the key moment.';
 			      const replyNote = result.coachText?.includes(reply) ? '' : ` The coach response is ${reply}.`;
@@ -2377,13 +2417,22 @@ class ChessReviewApp {
 	    const feedbackResult = result?.isCoachMove
 	      ? (this.analysisResults?.[index - 1] || this.liveMoveResults?.[index - 1])
 	      : result;
-	    const highlights = feedbackResult && index >= 0 && !feedbackResult.isCoachMove
-	      ? this._moveHighlightsForResult(feedbackResult)
-	      : [];
-	    if (highlights.length === 0 && lastMoveFrom && lastMoveTo) {
-	      highlights.push({ square: lastMoveFrom, type: 'highlight' });
-	      highlights.push({ square: lastMoveTo, type: 'highlight' });
-	    }
+		    const highlights = feedbackResult && index >= 0 && !feedbackResult.isCoachMove
+		      ? this._moveHighlightsForResult(feedbackResult, feedbackResult.moveIndex)
+		      : [];
+		    const resultHighlights = result && index >= 0
+		      ? this._moveHighlightsForResult(result, index)
+		      : [];
+		    for (const highlight of resultHighlights) {
+		      if (!highlights.some((entry) => entry.square === highlight.square && entry.type === highlight.type)) {
+		        highlights.push(highlight);
+		      }
+		    }
+		    if (highlights.length === 0 && lastMoveFrom && lastMoveTo) {
+		      highlights.push(...this._moveHighlightsForSquares(lastMoveFrom, lastMoveTo, this._isCoachMoveIndex(index)
+		        ? { color: '#D9ECFF', ringColor: '#2F6F9F' }
+		        : {}));
+		    }
 		    if (result && index >= 0 && !result.isCoachMove) {
 		      if (result.bestMove && result.bestMove !== result.moveUci) {
 		        highlights.push({ square: result.bestMove.substring(0, 2), type: 'best-from' });
@@ -2803,11 +2852,13 @@ class ChessReviewApp {
 	      }
 	    }
 
-	    this.board.setChessInstance(this.chess);
-	    this._updateBoard();
-	    this.board.setHighlights(lastMoveFrom && lastMoveTo
-	      ? [{ square: lastMoveFrom, type: 'highlight' }, { square: lastMoveTo, type: 'highlight' }]
-	      : []);
+		    this.board.setChessInstance(this.chess);
+		    this._updateBoard();
+		    this.board.setHighlights(lastMoveFrom && lastMoveTo
+		      ? this._moveHighlightsForSquares(lastMoveFrom, lastMoveTo, this._isCoachMoveIndex(target)
+		        ? { color: '#D9ECFF', ringColor: '#2F6F9F' }
+		        : {})
+		      : []);
 	    this.board.clearBestMoveArrow();
 	    this.elMoveBadge.style.display = 'none';
 		    this._updateActiveMoveInList();
@@ -2932,20 +2983,18 @@ class ChessReviewApp {
     this._setEngineControlsDisabled(true);
 	    this.analyzer.setReviewProfile(this._getReviewProfile());
 	    this.elReviewBtnText.textContent = 'Analyzing...';
-		    this.elProgressBar.style.display = 'block';
-		    this.elProgressFill.style.width = '0%';
-		    this.elReviewSummary.style.display = 'block';
-		    this.elReviewSummary.classList.add('review-skeleton');
-		    this.elMoveList?.parentElement?.classList.add('review-skeleton');
-		    this.board.setLoading(null, 'Reviewing game');
-	    const updateReviewProgress = (current, total, message) => {
-	      const pct = Math.round((current / Math.max(1, total - 1)) * 100);
-	      this.elProgressFill.style.width = clamp(pct, 0, 100) + '%';
-	      this.elReviewBtnText.textContent = message;
-	      this._previewReviewPosition(current - 1);
-	      this._updateLiveEvalPanel({
-	        busy: true,
-	        score: null,
+			    this.elProgressBar.style.display = 'block';
+			    this.elProgressFill.style.width = '0%';
+			    this.elReviewSummary.style.display = 'block';
+			    this.board.setLoading(null, 'Reviewing game');
+		    const updateReviewProgress = (current, total, message) => {
+		      const pct = Math.round((current / Math.max(1, total - 1)) * 100);
+		      this.elProgressFill.style.width = clamp(pct, 0, 100) + '%';
+		      this.elReviewBtnText.textContent = message;
+		      this._sprintReviewPlaybackTo(current - 1, { minDelay: 18, maxDelay: 90 });
+		      this._updateLiveEvalPanel({
+		        busy: true,
+		        score: null,
 	        line: message,
 	        meta: `Reviewing ${this._currentMoveLabel(current - 1)}`,
 	      });
@@ -2968,13 +3017,12 @@ class ChessReviewApp {
 			        );
 	      }
 
-			      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
-			      for (const brilliantMoveKey of this._brilliantMoveKeys(this.analysisResults)) {
-			        this._recordPublicStatEvent('brilliant_move', { brilliantMoveKey });
-			      }
-			      this.elReviewSummary.classList.remove('review-skeleton');
-			      this.elMoveList?.parentElement?.classList.remove('review-skeleton');
-		      this._showReviewSummary();
+				      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
+				      for (const brilliantMoveKey of this._brilliantMoveKeys(this.analysisResults)) {
+				        this._recordPublicStatEvent('brilliant_move', { brilliantMoveKey });
+				      }
+				      await this._sprintReviewPlaybackTo(this.gameMoves.length - 1, { minDelay: 6, maxDelay: 22 });
+			      this._showReviewSummary();
 	      this._renderMoveList();
 	      this._renderCriticalMoments();
 	      this._renderPostReviewEvalPanel();
@@ -2986,12 +3034,10 @@ class ChessReviewApp {
 	        title: 'Analysis failed',
 	        text: err.message,
 	      });
-		    } finally {
-			      this.isAnalyzing = false;
-			      this._stopReviewPlayback();
-			      this.elReviewSummary.classList.remove('review-skeleton');
-			      this.elMoveList?.parentElement?.classList.remove('review-skeleton');
-		      this._setEngineControlsDisabled(false);
+			    } finally {
+				      this.isAnalyzing = false;
+				      this._stopReviewPlayback();
+			      this._setEngineControlsDisabled(false);
 		      this._syncActionButtons();
 		      this.elReviewBtnText.textContent = this.analysisResults ? 'Re-analyze Game' : 'Start Review';
 	      this.elProgressBar.style.display = 'none';
@@ -3281,20 +3327,20 @@ class ChessReviewApp {
 					        evals[chunk.start + offset] = entry;
 					      });
 					      completedPositions += chunkEvals.length;
-					      const pct = 12 + Math.round((completedPositions / Math.max(1, total)) * 76);
-					      this.elProgressFill.style.width = `${pct}%`;
-				    }
+						      const pct = 12 + Math.round((completedPositions / Math.max(1, total)) * 76);
+						      this.elProgressFill.style.width = `${pct}%`;
+						      await this._sprintReviewPlaybackTo(completedPositions - 1, { minDelay: 12, maxDelay: 58 });
+					    }
 
 		    if (evals.length !== positions.length || evals.some((entry) => !entry)) {
 		      throw new Error('Server review returned an incomplete evaluation set.');
 		    }
 
-		    this.elProgressFill.style.width = '94%';
-		    this.elReviewBtnText.textContent = 'Classifying moves...';
-		    this._stopReviewPlayback();
-		    if (this.gameMoves.length > 0) {
-		      this._previewReviewPosition(this.gameMoves.length - 1);
-		    }
+			    this.elProgressFill.style.width = '94%';
+			    this.elReviewBtnText.textContent = 'Classifying moves...';
+			    if (this.gameMoves.length > 0) {
+			      await this._sprintReviewPlaybackTo(this.gameMoves.length - 1, { minDelay: 6, maxDelay: 20 });
+			    }
 		    const opening = this.analyzer.detectOpening(this.gameMoves);
 	    const results = this.analyzer.resultsFromEvals(
 	      this.gameMoves,

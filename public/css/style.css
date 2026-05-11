@@ -986,7 +986,7 @@ body:not(.menu-active) .main-menu {
 }
 
 .review-skeleton::after {
-  content: "";
+  content: none;
   position: absolute;
   inset: 14px;
   border-radius: 8px;
@@ -1001,7 +1001,7 @@ body:not(.menu-active) .main-menu {
 }
 
 .review-skeleton > * {
-  opacity: 0.2;
+  opacity: 1;
 }
 
 @keyframes skeleton-sweep {
@@ -1259,12 +1259,6 @@ body:not(.menu-active) .main-menu {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-body[data-mode="coach"] .btn-review,
-body[data-mode="coach"] .review-summary,
-body[data-mode="coach"] .critical-moments {
-  display: none !important;
 }
 
 body[data-mode="coach"] .analysis-overview {
