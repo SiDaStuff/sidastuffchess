@@ -1,19 +1,14 @@
 const { ServerStockfishEngine } = require('./_lib/stockfish-engine');
 const { loadAnalyzer, loadChess } = require('./_lib/analysis-loader');
 const {
-  getPublicStats,
   incrementPublicStats,
   claimUniqueBrilliantMoves,
-  tryClaimReviewStats,
-  putServerReviewChunk,
-  getServerReviewChunks,
-  clearServerReviewSession,
 } = require('./_lib/firebase-stats');
 
 const SERVER_REVIEW_PROFILE = {
   depth: 14,
-  multiPv: 2,
-  timeoutMs: 6000,
+  multiPv: 1,
+  timeoutMs: 4500,
 };
 const SERVER_POSITION_BATCH_LIMIT = 8;
 
@@ -114,64 +109,12 @@ function brilliantMoveKey(entry) {
   return `${positionKey}|${entry.moveUci}`;
 }
 
-function reviewStatsKey(statsReview = {}) {
-  const moves = Array.isArray(statsReview.moves) ? statsReview.moves.join(' ') : '';
-  const initialFen = statsReview.initialFen || '';
-  const reviewId = statsReview.reviewId || '';
-  return `${reviewId}|${initialFen}|${moves}`;
-}
-
-function collectStoredEvals(chunks = {}, totalPositions = 0) {
-  const evals = new Array(totalPositions);
-  for (const chunk of Object.values(chunks || {})) {
-    const start = Math.max(0, Math.floor(Number(chunk?.start) || 0));
-    const chunkEvals = Array.isArray(chunk?.evals) ? chunk.evals : [];
-    chunkEvals.forEach((entry, offset) => {
-      if (start + offset < evals.length) evals[start + offset] = entry;
-    });
-  }
-  return evals;
-}
-
-async function recordChunkedReviewStats({ statsReview, chunkStart, evals, analyzer, initialFen }) {
-  if (!statsReview || !Array.isArray(statsReview.moves) || statsReview.moves.length === 0) return null;
-  const totalPositions = Math.max(0, Math.floor(Number(statsReview.totalPositions) || 0));
-  if (!totalPositions) return null;
-
-  const key = reviewStatsKey(statsReview);
-  await putServerReviewChunk(key, {
-    start: chunkStart,
-    evals,
-  });
-
-  const chunks = await getServerReviewChunks(key);
-  const allEvals = collectStoredEvals(chunks, totalPositions);
-  if (allEvals.some((entry) => !entry)) return null;
-
-  const moves = statsReview.moves;
-  const positions = analyzer._positionsForMoves(moves, initialFen);
-  if (positions.length !== allEvals.length) return getPublicStats();
-
-  const claimed = await tryClaimReviewStats(key);
-  if (!claimed) {
-    return getPublicStats();
-  }
-
-  const opening = analyzer.detectOpening(moves);
-  const results = analyzer.resultsFromEvals(
-    moves,
-    positions,
-    allEvals,
-    opening,
-    { initialFen, headers: statsReview.headers || {}, skipMateThreat: true }
-  );
-  const brilliantMoveKeys = results.map(brilliantMoveKey).filter(Boolean);
-  const brilliantMoves = await claimUniqueBrilliantMoves(brilliantMoveKeys);
-  const publicStats = await incrementPublicStats({ movesAnalyzed: moves.length, brilliantMoves });
-  clearServerReviewSession(key).catch((err) => {
-    console.warn('Could not clear server review session:', err.message);
-  });
-  return publicStats;
+function analyzedMoveCountForPositions(start, count) {
+  const first = Math.max(0, Math.floor(Number(start) || 0));
+  const length = Math.max(0, Math.floor(Number(count) || 0));
+  if (!length) return 0;
+  const last = first + length - 1;
+  return Math.max(0, last - Math.max(first, 1) + 1);
 }
 
 const json = (statusCode, body) => ({
@@ -215,19 +158,17 @@ exports.handler = async (event, context = {}) => {
 	    return retryable(`Server eval chunks are capped at ${SERVER_POSITION_BATCH_LIMIT} positions.`);
 	  }
 	
-	  const Chess = loadChess();
-		  const { MoveAnalyzer } = loadAnalyzer();
+		  const Chess = loadChess();
+			  const { MoveAnalyzer } = loadAnalyzer();
 		  const analyzer = new MoveAnalyzer();
 		  const profile = payload.profile || {};
 		  analyzer.setReviewProfile({
 		    depth: SERVER_REVIEW_PROFILE.depth,
-		    multiPv: positions.length
-		      ? Math.max(1, Math.min(Number(profile.multiPv) || 1, 2))
-		      : SERVER_REVIEW_PROFILE.multiPv,
-		    timeoutMs: SERVER_REVIEW_PROFILE.timeoutMs,
+		    multiPv: Math.max(1, Math.min(Number(profile.multiPv) || SERVER_REVIEW_PROFILE.multiPv, 2)),
+		    timeoutMs: Math.max(1200, Math.min(Number(profile.timeoutMs) || SERVER_REVIEW_PROFILE.timeoutMs, SERVER_REVIEW_PROFILE.timeoutMs)),
 		  });
 
-  const initialFen = payload.initialFen || payload.headers?.FEN || payload.statsReview?.initialFen || undefined;
+  const initialFen = payload.initialFen || payload.headers?.FEN || undefined;
   if (initialFen) {
     const validation = new Chess();
     if (!validation.load(initialFen)) {
@@ -246,15 +187,10 @@ exports.handler = async (event, context = {}) => {
 	      const evals = await withEngineQueue(() => analyzer.evaluatePositions(positions, reviewEngine, null));
 	      let publicStats = null;
 	      try {
-	        publicStats = await recordChunkedReviewStats({
-	          statsReview: payload.statsReview,
-	          chunkStart: Math.max(0, Math.floor(Number(payload.chunkStart) || 0)),
-	          evals,
-	          analyzer,
-	          initialFen,
-	        });
+	        const movesAnalyzed = analyzedMoveCountForPositions(payload.chunkStart, evals.length);
+	        if (movesAnalyzed) publicStats = await incrementPublicStats({ movesAnalyzed });
 	      } catch (err) {
-	        console.warn('Could not update chunked review stats:', err.message);
+	        console.warn('Could not update server move stats:', err.message);
 	      }
 	      return json(200, {
 	        evals,

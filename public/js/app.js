@@ -31,7 +31,7 @@ class ChessReviewApp {
     this.lastLiveEvalFen = '';
     this.gameStatus = null;
     this.currentEvalScore = 0;
-    this.coachMode = {
+			    this.coachMode = {
       active: false,
       humanColor: 'w',
       elo: 1200,
@@ -274,8 +274,8 @@ class ChessReviewApp {
 		    if (this.elStatsBrilliantMoves) this.elStatsBrilliantMoves.textContent = this._formatPublicStat(stats.brilliantMoves);
 		  }
 
-	  async _loadPublicStats() {
-	    this.elPublicStats?.classList.add('stats-loading');
+		  async _loadPublicStats() {
+		    this.elPublicStats?.classList.add('stats-loading');
 	    try {
 	      const response = await fetch('/.netlify/functions/public-stats', { cache: 'no-store' });
 	      if (!response.ok) throw new Error(`Stats responded with ${response.status}`);
@@ -283,10 +283,33 @@ class ChessReviewApp {
 	      this._renderPublicStats(data.stats || {});
 		    } catch (_err) {
 		      this._renderPublicStats({ movesAnalyzed: 0, coachGamesPlayed: 0, brilliantMoves: 0 });
+			    }
+			  }
+
+		  async _recordPublicStatEvent(event, extra = {}) {
+		    try {
+		      const response = await fetch('/.netlify/functions/public-stats', {
+		        method: 'POST',
+		        headers: { 'Content-Type': 'application/json' },
+		        cache: 'no-store',
+		        body: JSON.stringify({ event, ...extra }),
+		      });
+		      if (!response.ok) return;
+		      const data = await response.json();
+		      this._renderPublicStats(data.stats || {});
+		    } catch (_err) {
+		      // Public stats never block chess.
 		    }
 		  }
 
-			  _bindEvents() {
+		  _brilliantMoveKeys(results = this.analysisResults) {
+		    if (!Array.isArray(results)) return [];
+		    return results
+		      .filter((entry) => entry?.classificationKey === 'BRILLIANT' && entry.fen && entry.moveUci)
+		      .map((entry) => `${String(entry.fen).split(/\s+/).slice(0, 4).join(' ')}|${entry.moveUci}`);
+		  }
+
+				  _bindEvents() {
     this.elBtnMenuImport?.addEventListener('click', () => this._showEngineChoiceModal('import'));
     this.elBtnMenuCoach?.addEventListener('click', () => this._showEngineChoiceModal('coach'));
     this.elBtnBackMenu?.addEventListener('click', () => this._showMainMenu());
@@ -1061,9 +1084,10 @@ class ChessReviewApp {
       lastAdviceMoveIndex: null,
 	      hintLevel: 0,
 	      hintFen: '',
-	      hintMove: '',
-		    };
-			    this._loadGame([], {
+		      hintMove: '',
+			    };
+			    this._recordPublicStatEvent('coach_game_started');
+				    this._loadGame([], {
 	      Event: 'Coach',
 	      White: humanColor === 'w' ? 'You' : 'Coach',
 	      Black: humanColor === 'b' ? 'You' : 'Coach',
@@ -2796,9 +2820,10 @@ class ChessReviewApp {
 
 		    const start = clamp(options.start ?? 0, 0, this.gameMoves.length - 1);
 		    const end = clamp(options.end ?? this.gameMoves.length - 1, start, this.gameMoves.length - 1);
-		    const minDelay = options.minDelay ?? 170;
-		    const maxDelay = options.maxDelay ?? 760;
-		    const loop = options.loop !== false;
+			    const minDelay = options.minDelay ?? 170;
+			    const maxDelay = options.maxDelay ?? 760;
+			    const loop = options.loop !== false;
+			    const wrap = options.wrap === true;
 		    const current = Number.isInteger(this.currentMoveIndex) ? this.currentMoveIndex : start;
 		    let index = clamp(options.initialIndex ?? (current >= start && current <= end ? current : start), start, end);
 		    let direction = 1;
@@ -2823,8 +2848,11 @@ class ChessReviewApp {
 		          this.reviewPlaybackTimer = setTimeout(tick, maxDelay);
 		          return;
 		        }
-		      } else {
-		        index += direction;
+			      } else if (wrap) {
+			        index += 1;
+			        if (index > end) index = start;
+			      } else {
+			        index += direction;
 		        if (index >= end) {
 		          index = end;
 		          direction = -1;
@@ -2904,9 +2932,12 @@ class ChessReviewApp {
     this._setEngineControlsDisabled(true);
 	    this.analyzer.setReviewProfile(this._getReviewProfile());
 	    this.elReviewBtnText.textContent = 'Analyzing...';
-	    this.elProgressBar.style.display = 'block';
-	    this.elProgressFill.style.width = '0%';
-	    this.board.setLoading(null, 'Reviewing game');
+		    this.elProgressBar.style.display = 'block';
+		    this.elProgressFill.style.width = '0%';
+		    this.elReviewSummary.style.display = 'block';
+		    this.elReviewSummary.classList.add('review-skeleton');
+		    this.elMoveList?.parentElement?.classList.add('review-skeleton');
+		    this.board.setLoading(null, 'Reviewing game');
 	    const updateReviewProgress = (current, total, message) => {
 	      const pct = Math.round((current / Math.max(1, total - 1)) * 100);
 	      this.elProgressFill.style.width = clamp(pct, 0, 100) + '%';
@@ -2937,8 +2968,13 @@ class ChessReviewApp {
 			        );
 	      }
 
-		      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
-	      this._showReviewSummary();
+			      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
+			      for (const brilliantMoveKey of this._brilliantMoveKeys(this.analysisResults)) {
+			        this._recordPublicStatEvent('brilliant_move', { brilliantMoveKey });
+			      }
+			      this.elReviewSummary.classList.remove('review-skeleton');
+			      this.elMoveList?.parentElement?.classList.remove('review-skeleton');
+		      this._showReviewSummary();
 	      this._renderMoveList();
 	      this._renderCriticalMoments();
 	      this._renderPostReviewEvalPanel();
@@ -2951,8 +2987,10 @@ class ChessReviewApp {
 	        text: err.message,
 	      });
 		    } finally {
-		      this.isAnalyzing = false;
-		      this._stopReviewPlayback();
+			      this.isAnalyzing = false;
+			      this._stopReviewPlayback();
+			      this.elReviewSummary.classList.remove('review-skeleton');
+			      this.elMoveList?.parentElement?.classList.remove('review-skeleton');
 		      this._setEngineControlsDisabled(false);
 		      this._syncActionButtons();
 		      this.elReviewBtnText.textContent = this.analysisResults ? 'Re-analyze Game' : 'Start Review';
@@ -3004,11 +3042,11 @@ class ChessReviewApp {
 		              moves: this.gameMoves,
 		              headers: this.gameHeaders || {},
 		              initialFen: this.initialFen,
-			              profile: {
+			          profile: {
 			                key: reviewProfile.key,
 				              depth: 14,
-			                multiPv: Math.min(reviewProfile.multiPv, 2),
-			                timeoutMs: 6000,
+			                multiPv: 1,
+			                timeoutMs: 4500,
 			              },
 			            }),
 			          });
@@ -3084,7 +3122,7 @@ class ChessReviewApp {
 				      || /413|429|500|502|503|504|busy|warming|retry|capped|timeout|timed out|outofmemory|out of memory|runtime\.outofmemory|signal:\s*killed|server review chunk/i.test(message);
 				  }
 
-				  async _fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex = 0, statsReview = null) {
+				  async _fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex = 0) {
 			    const controller = new AbortController();
 				    const timeout = setTimeout(() => controller.abort(), 55000);
 		    let response;
@@ -3093,12 +3131,11 @@ class ChessReviewApp {
 	        method: 'POST',
 	        headers: { 'Content-Type': 'application/json' },
 	        signal: controller.signal,
-		        body: JSON.stringify({
-		          positions,
-		          profile,
-		          chunkStart: baseIndex,
-		          statsReview,
-		        }),
+			        body: JSON.stringify({
+			          positions,
+			          profile,
+			          chunkStart: baseIndex,
+			        }),
 	      });
 	    } catch (err) {
 	      if (err.name === 'AbortError') {
@@ -3135,67 +3172,63 @@ class ChessReviewApp {
 			    return data.evals;
 			  }
 
-					  async _fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex = 0, retryCount = 0, statsReview = null) {
+					  async _fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex = 0, retryCount = 0) {
 					    try {
-					      return await this._fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex, statsReview);
+					      return await this._fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex);
 					    } catch (err) {
 					      const message = String(err?.message || err || '');
 					      if (positions.length > 1 && /busy|warming|retrying shortly/i.test(message) && retryCount < 3) {
 					        const waitMs = 500 + (retryCount * retryCount * 400);
-					        this.elReviewBtnText.textContent = `Server retry ${retryCount + 1}/3`;
-					        this._updateLiveEvalPanel({
-					          busy: true,
-					          score: null,
-					          line: `Server worker is waiting for chunk ${chunkIndex + 1}/${chunkCount}.`,
-					          meta: message,
-					        });
-					        await new Promise((resolve) => setTimeout(resolve, waitMs));
-					        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1, statsReview);
-					      }
-					      if (positions.length <= 1 && this._isServerChunkResourceError(err) && retryCount < 4) {
-				        const waitMs = 450 + (retryCount * retryCount * 350);
-				        this.elReviewBtnText.textContent = `Server retry ${retryCount + 1}/4`;
+				        this.elReviewBtnText.textContent = 'Reviewing Game';
 				        this._updateLiveEvalPanel({
 				          busy: true,
 				          score: null,
-				          line: `Server review is retrying chunk ${chunkIndex + 1}/${chunkCount}.`,
-				          meta: err.message || `Waiting ${waitMs}ms before retrying.`,
+				          line: 'Reviewing Game',
+				          meta: 'Server is catching up.',
 				        });
+					        await new Promise((resolve) => setTimeout(resolve, waitMs));
+					        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1);
+					      }
+					      if (positions.length <= 1 && this._isServerChunkResourceError(err) && retryCount < 4) {
+				        const waitMs = 450 + (retryCount * retryCount * 350);
+					        this.elReviewBtnText.textContent = 'Reviewing Game';
+					        this._updateLiveEvalPanel({
+					          busy: true,
+					          score: null,
+					          line: 'Reviewing Game',
+					          meta: 'Server is catching up.',
+					        });
 				        await new Promise((resolve) => setTimeout(resolve, waitMs));
-					        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1, statsReview);
+					        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1);
 				      }
 					    if (positions.length <= 1 || !this._isServerChunkResourceError(err)) throw err;
 				      const midpoint = Math.ceil(positions.length / 2);
 		      this._updateLiveEvalPanel({
 		        busy: true,
 		        score: null,
-		        line: `Server review chunk ${chunkIndex + 1}/${chunkCount} was too large. Splitting it...`,
-		        meta: `Retrying positions ${baseIndex + 1}-${baseIndex + positions.length} in smaller pieces.`,
+			        line: 'Reviewing Game',
+			        meta: 'Adjusting analysis batch.',
 		      });
 				      const lighterProfile = {
 				        ...profile,
 				        depth: 14,
 				        multiPv: 1,
-						        timeoutMs: 6000,
+					        timeoutMs: 4500,
 				      };
 			      const first = await this._fetchServerEvalChunkSafely(
 			        positions.slice(0, midpoint),
 			        lighterProfile,
 			        chunkIndex,
 			        chunkCount,
-			        baseIndex,
-			        0,
-			        statsReview
-			      );
+				        baseIndex
+				      );
 			      const second = await this._fetchServerEvalChunkSafely(
 			        positions.slice(midpoint),
 			        lighterProfile,
 			        chunkIndex,
 			        chunkCount,
-			        baseIndex + midpoint,
-			        0,
-			        statsReview
-			      );
+				        baseIndex + midpoint
+				      );
 		      return [...first, ...second];
 		    }
 		  }
@@ -3211,68 +3244,46 @@ class ChessReviewApp {
 						    const serverProfile = {
 						      key: reviewProfile.key,
 						      depth: 14,
-						      multiPv: 2,
-							      timeoutMs: 6000,
-						    };
-						    const statsReview = {
-						      reviewId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-						      moves: this.gameMoves.slice(),
-						      headers: this.gameHeaders || {},
-						      initialFen: this.initialFen,
-						      totalPositions: total,
+						      multiPv: 1,
+							      timeoutMs: 4500,
 						    };
 
-				    const evals = new Array(total);
-				    let nextChunkIndex = 0;
-				    let completedPositions = 0;
-				    const concurrency = total > 80 ? 2 : 3;
+					    const evals = new Array(total);
+					    let completedPositions = 0;
+					    this._startReviewPlayback({
+					      start: 0,
+					      end: Math.max(0, this.gameMoves.length - 1),
+					      initialIndex: 0,
+					      minDelay: 520,
+					      maxDelay: 1200,
+					      loop: true,
+					      wrap: true,
+					    });
 
-				    const runChunk = async (workerIndex) => {
-				      while (nextChunkIndex < chunks.length) {
-				        const i = nextChunkIndex;
-				        nextChunkIndex += 1;
-				        const chunk = chunks[i];
-				        const startMove = clamp(chunk.start, 0, Math.max(0, this.gameMoves.length - 1));
-				        const endMove = clamp(chunk.start + chunk.positions.length - 1, startMove, Math.max(0, this.gameMoves.length - 1));
-				        this.elReviewBtnText.textContent = `Server Reviewing ${completedPositions + 1}/${total}`;
-				        this._updateLiveEvalPanel({
-				          busy: true,
-				          score: null,
-				          line: `Server worker ${workerIndex + 1} analyzing chunk ${i + 1}/${chunks.length}`,
-				          meta: `Moves ${startMove + 1}-${endMove + 1} | ${completedPositions}/${total} positions complete.`,
-				        });
-				        if (workerIndex === 0) {
-				          this._startReviewPlayback({
-				            start: startMove,
-				            end: endMove,
-				            initialIndex: i === 0 ? Math.max(0, this.currentMoveIndex) : startMove,
-				            minDelay: total > 90 ? 80 : 110,
-				            maxDelay: total > 90 ? 330 : 470,
-				            loop: false,
-				          });
-				        }
+					    for (let i = 0; i < chunks.length; i += 1) {
+					      const chunk = chunks[i];
+					      this.elReviewBtnText.textContent = 'Reviewing Game';
+					      this._updateLiveEvalPanel({
+					        busy: true,
+					        score: null,
+					        line: 'Reviewing Game',
+					        meta: `${completedPositions}/${total} positions`,
+					      });
 
-				        const chunkEvals = await this._fetchServerEvalChunkSafely(
-				          chunk.positions,
-				          serverProfile,
-				          i,
-				          chunks.length,
-				          chunk.start,
-				          0,
-				          statsReview
-				        );
-				        chunkEvals.forEach((entry, offset) => {
-				          evals[chunk.start + offset] = entry;
-				        });
-				        completedPositions += chunkEvals.length;
-				        const pct = 12 + Math.round((completedPositions / Math.max(1, total)) * 76);
-				        this.elProgressFill.style.width = `${pct}%`;
-				      }
-				    };
-
-				    await Promise.all(
-				      Array.from({ length: Math.min(concurrency, chunks.length) }, (_entry, workerIndex) => runChunk(workerIndex))
-				    );
+					      const chunkEvals = await this._fetchServerEvalChunkSafely(
+					        chunk.positions,
+					        serverProfile,
+					        i,
+					        chunks.length,
+					        chunk.start
+					      );
+					      chunkEvals.forEach((entry, offset) => {
+					        evals[chunk.start + offset] = entry;
+					      });
+					      completedPositions += chunkEvals.length;
+					      const pct = 12 + Math.round((completedPositions / Math.max(1, total)) * 76);
+					      this.elProgressFill.style.width = `${pct}%`;
+				    }
 
 		    if (evals.length !== positions.length || evals.some((entry) => !entry)) {
 		      throw new Error('Server review returned an incomplete evaluation set.');

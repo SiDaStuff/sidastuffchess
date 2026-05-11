@@ -980,6 +980,34 @@ body:not(.menu-active) .main-menu {
   display: block;
 }
 
+.review-skeleton {
+  position: relative;
+  overflow: hidden;
+}
+
+.review-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, transparent, rgba(255,255,255,0.42), transparent) -120px 0 / 120px 100% no-repeat,
+    linear-gradient(#ece6dc 0 0) 0 0 / 44% 16px no-repeat,
+    linear-gradient(#ece6dc 0 0) 0 34px / 72% 12px no-repeat,
+    linear-gradient(#ece6dc 0 0) 0 58px / 58% 12px no-repeat,
+    linear-gradient(#ece6dc 0 0) 0 88px / 88% 12px no-repeat;
+  pointer-events: none;
+  animation: skeleton-sweep 1.1s linear infinite;
+}
+
+.review-skeleton > * {
+  opacity: 0.2;
+}
+
+@keyframes skeleton-sweep {
+  to { background-position: calc(100% + 120px) 0, 0 0, 0 34px, 0 58px, 0 88px; }
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

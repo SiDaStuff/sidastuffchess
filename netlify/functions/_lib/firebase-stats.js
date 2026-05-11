@@ -214,10 +214,16 @@ async function claimUniqueBrilliantMoves(rawKeys = []) {
   return claimed;
 }
 
-async function tryClaimReviewStats(rawKey) {
-  const key = brilliantMoveStorageKey(`review-stats:${rawKey}`);
-  if (!key) return false;
-  const path = `/publicStatsReviewedGames/${key}.json`;
+function clientIpKey(rawIp) {
+  return crypto.createHash('sha256').update(`client-ip:v1:${String(rawIp || 'unknown')}`).digest('hex');
+}
+
+async function tryClaimRateLimit(bucket, rawIp, windowMs = 5 * 60 * 1000) {
+  const cleanBucket = String(bucket || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 40);
+  if (!cleanBucket) return false;
+  const key = clientIpKey(rawIp);
+  const windowId = Math.floor(Date.now() / Math.max(1000, windowMs));
+  const path = `/publicStatsRateLimits/${cleanBucket}/${key}_${windowId}.json`;
   const currentResponse = await firebaseRequest(path, {
     method: 'GET',
     headers: { 'X-Firebase-ETag': 'true' },
@@ -241,45 +247,9 @@ async function tryClaimReviewStats(rawKey) {
   }
 }
 
-async function putServerReviewChunk(reviewKey, chunk = {}) {
-  const safeKey = brilliantMoveStorageKey(`review-session:${reviewKey}`);
-  if (!safeKey) throw new Error('Missing review key.');
-  const start = Math.max(0, Math.floor(Number(chunk.start) || 0));
-  const path = `/serverReviewSessions/${safeKey}/chunks/${start}.json`;
-  const body = JSON.stringify({
-    start,
-    evals: Array.isArray(chunk.evals) ? chunk.evals : [],
-    updatedAt: Date.now(),
-  });
-  await firebaseRequest(path, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(body),
-    },
-  }, body);
-  return safeKey;
-}
-
-async function getServerReviewChunks(reviewKey) {
-  const safeKey = brilliantMoveStorageKey(`review-session:${reviewKey}`);
-  if (!safeKey) throw new Error('Missing review key.');
-  const response = await firebaseRequest(`/serverReviewSessions/${safeKey}/chunks.json`, { method: 'GET' });
-  return response.json || {};
-}
-
-async function clearServerReviewSession(reviewKey) {
-  const safeKey = brilliantMoveStorageKey(`review-session:${reviewKey}`);
-  if (!safeKey) return;
-  await firebaseRequest(`/serverReviewSessions/${safeKey}.json`, { method: 'DELETE' });
-}
-
 module.exports = {
   getPublicStats,
   incrementPublicStats,
   claimUniqueBrilliantMoves,
-  tryClaimReviewStats,
-  putServerReviewChunk,
-  getServerReviewChunks,
-  clearServerReviewSession,
+  tryClaimRateLimit,
 };
