@@ -267,12 +267,12 @@ class ChessReviewApp {
 	    return number.toLocaleString();
 	  }
 
-	  _renderPublicStats(stats = {}) {
-	    this.elPublicStats?.classList.remove('stats-loading');
-	    if (this.elStatsGamesAnalyzed) this.elStatsGamesAnalyzed.textContent = this._formatPublicStat(stats.gamesAnalyzed);
-	    if (this.elStatsCoachGames) this.elStatsCoachGames.textContent = this._formatPublicStat(stats.coachGamesPlayed);
-	    if (this.elStatsBrilliantMoves) this.elStatsBrilliantMoves.textContent = this._formatPublicStat(stats.brilliantMoves);
-	  }
+		  _renderPublicStats(stats = {}) {
+		    this.elPublicStats?.classList.remove('stats-loading');
+		    if (this.elStatsGamesAnalyzed) this.elStatsGamesAnalyzed.textContent = this._formatPublicStat(stats.movesAnalyzed ?? stats.gamesAnalyzed);
+		    if (this.elStatsCoachGames) this.elStatsCoachGames.textContent = this._formatPublicStat(stats.coachGamesPlayed);
+		    if (this.elStatsBrilliantMoves) this.elStatsBrilliantMoves.textContent = this._formatPublicStat(stats.brilliantMoves);
+		  }
 
 	  async _loadPublicStats() {
 	    this.elPublicStats?.classList.add('stats-loading');
@@ -281,10 +281,10 @@ class ChessReviewApp {
 	      if (!response.ok) throw new Error(`Stats responded with ${response.status}`);
 	      const data = await response.json();
 	      this._renderPublicStats(data.stats || {});
-	    } catch (_err) {
-	      this._renderPublicStats({ gamesAnalyzed: 0, coachGamesPlayed: 0, brilliantMoves: 0 });
-	    }
-	  }
+		    } catch (_err) {
+		      this._renderPublicStats({ movesAnalyzed: 0, coachGamesPlayed: 0, brilliantMoves: 0 });
+		    }
+		  }
 
 	  async _recordPublicStatEvent(event, extra = {}) {
 	    try {
@@ -301,11 +301,12 @@ class ChessReviewApp {
 	    }
 	  }
 
-	  _brilliantMoveCount(results = this.analysisResults) {
-	    return Array.isArray(results)
-	      ? results.filter((entry) => entry?.classificationKey === 'BRILLIANT').length
-	      : 0;
-	  }
+		  _brilliantMoveKeys(results = this.analysisResults) {
+		    if (!Array.isArray(results)) return [];
+		    return results
+		      .filter((entry) => entry?.classificationKey === 'BRILLIANT' && entry.fen && entry.moveUci)
+		      .map((entry) => `${String(entry.fen).split(/\s+/).slice(0, 4).join(' ')}|${entry.moveUci}`);
+		  }
 	
 		  _bindEvents() {
     this.elBtnMenuImport?.addEventListener('click', () => this._showEngineChoiceModal('import'));
@@ -2979,7 +2980,8 @@ class ChessReviewApp {
 
 	      if (!this.analysisResults.statsRecorded) {
 	        this._recordPublicStatEvent('game_reviewed', {
-	          brilliantMoves: this._brilliantMoveCount(this.analysisResults),
+	          movesAnalyzed: this.analysisResults.length || this.gameMoves.length,
+	          brilliantMoveKeys: this._brilliantMoveKeys(this.analysisResults),
 	        });
 	        this.analysisResults.statsRecorded = true;
 	      }
@@ -3011,7 +3013,7 @@ class ChessReviewApp {
 	  async _analyzeGameOnServer() {
 		    const reviewProfile = this._getReviewProfile();
 		    const positions = this.analyzer._positionsForMoves(this.gameMoves, this.initialFen);
-		    if (positions.length > 36) {
+			    if (positions.length > 4) {
 		      return this._analyzeGameOnServerChunks(positions, reviewProfile);
 		    }
 		    this.elReviewBtnText.textContent = 'Sending to Server...';
@@ -3047,14 +3049,14 @@ class ChessReviewApp {
 	          moves: this.gameMoves,
 	          headers: this.gameHeaders || {},
 	          initialFen: this.initialFen,
-	          profile: {
-	            key: reviewProfile.key,
-		            depth: Math.min(reviewProfile.depth, 14),
-	            multiPv: Math.min(reviewProfile.multiPv, 3),
-	            timeoutMs: Math.min(reviewProfile.timeoutMs, 9000),
-	          },
-	        }),
-	      });
+		          profile: {
+		            key: reviewProfile.key,
+			            depth: 14,
+		            multiPv: Math.min(reviewProfile.multiPv, 3),
+		            timeoutMs: 7000,
+		          },
+		        }),
+		      });
 	    } catch (err) {
 	      clearInterval(progressTimer);
 	      if (err.name === 'AbortError') {
@@ -3117,20 +3119,21 @@ class ChessReviewApp {
     results.whiteAcpl = data.whiteAcpl;
     results.blackAcpl = data.blackAcpl;
     results.whiteCaps = data.whiteCaps;
-    results.blackCaps = data.blackCaps;
-		    results.phaseSummary = data.phaseSummary;
-		    results.statsRecorded = true;
-		    return results;
-		  }
+	    results.blackCaps = data.blackCaps;
+			    results.phaseSummary = data.phaseSummary;
+			    if (data.publicStats) this._renderPublicStats(data.publicStats);
+			    results.statsRecorded = Boolean(data.publicStats);
+			    return results;
+			  }
 
-		  _isServerChunkResourceError(err) {
-		    const message = String(err?.message || err || '');
-		    return /502|outofmemory|out of memory|runtime\.outofmemory|signal:\s*killed|server review chunk/i.test(message);
-		  }
+			  _isServerChunkResourceError(err) {
+			    const message = String(err?.message || err || '');
+			    return /413|502|capped|outofmemory|out of memory|runtime\.outofmemory|signal:\s*killed|server review chunk/i.test(message);
+			  }
 
 		  async _fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex = 0) {
 		    const controller = new AbortController();
-		    const timeout = setTimeout(() => controller.abort(), 10000);
+			    const timeout = setTimeout(() => controller.abort(), 18000);
 		    let response;
 	    try {
 	      response = await fetch('/.netlify/functions/analyze', {
@@ -3169,24 +3172,28 @@ class ChessReviewApp {
 		    return data.evals;
 		  }
 
-		  async _fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex = 0) {
-		    try {
-		      return await this._fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex);
-		    } catch (err) {
-		      if (positions.length <= 1 || !this._isServerChunkResourceError(err)) throw err;
-		      const midpoint = Math.ceil(positions.length / 2);
+			  async _fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex = 0, retryCount = 0) {
+			    try {
+			      return await this._fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex);
+			    } catch (err) {
+			      if (positions.length <= 1 && this._isServerChunkResourceError(err) && retryCount < 1) {
+			        await new Promise((resolve) => setTimeout(resolve, 500));
+			        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1);
+			      }
+				    if (positions.length <= 1 || !this._isServerChunkResourceError(err)) throw err;
+			      const midpoint = Math.ceil(positions.length / 2);
 		      this._updateLiveEvalPanel({
 		        busy: true,
 		        score: null,
 		        line: `Server review chunk ${chunkIndex + 1}/${chunkCount} was too large. Splitting it...`,
 		        meta: `Retrying positions ${baseIndex + 1}-${baseIndex + positions.length} in smaller pieces.`,
 		      });
-		      const lighterProfile = {
-		        ...profile,
-		        depth: Math.max(3, Math.min(profile.depth || 4, 4)),
-		        multiPv: 1,
-		        timeoutMs: Math.max(120, Math.min(profile.timeoutMs || 220, 260)),
-		      };
+			      const lighterProfile = {
+			        ...profile,
+			        depth: 14,
+			        multiPv: 1,
+				        timeoutMs: 7000,
+			      };
 		      const first = await this._fetchServerEvalChunkSafely(
 		        positions.slice(0, midpoint),
 		        lighterProfile,
@@ -3207,18 +3214,18 @@ class ChessReviewApp {
 
 		  async _analyzeGameOnServerChunks(positions, reviewProfile) {
 		    const total = positions.length;
-		    const chunkSize = total > 90 ? 4 : 6;
+		    const chunkSize = 1;
 	    const chunks = [];
 	    for (let i = 0; i < total; i += chunkSize) {
 	      chunks.push({ start: i, positions: positions.slice(i, i + chunkSize) });
 	    }
 
-			    const serverProfile = {
-			      key: reviewProfile.key,
-			      depth: 10,
-			      multiPv: 1,
-			      timeoutMs: 1400,
-			    };
+				    const serverProfile = {
+				      key: reviewProfile.key,
+				      depth: 14,
+				      multiPv: 1,
+					      timeoutMs: 7000,
+				    };
 
 			    const evals = [];
 			    for (let i = 0; i < chunks.length; i += 1) {

@@ -1,4 +1,4 @@
-const { getPublicStats, incrementPublicStats } = require('./_lib/firebase-stats');
+const { getPublicStats, incrementPublicStats, claimUniqueBrilliantMoves } = require('./_lib/firebase-stats');
 
 const json = (statusCode, body) => ({
   statusCode,
@@ -29,8 +29,8 @@ exports.handler = async (event) => {
       if (eventName === 'coach_game_started') {
         delta.coachGamesPlayed = 1;
       } else if (eventName === 'game_reviewed') {
-        delta.gamesAnalyzed = 1;
-        delta.brilliantMoves = Math.max(0, Math.min(30, Number(payload.brilliantMoves) || 0));
+        delta.movesAnalyzed = Math.max(0, Math.min(240, Number(payload.movesAnalyzed) || 0));
+        delta.brilliantMoves = await claimUniqueBrilliantMoves(payload.brilliantMoveKeys || []);
       } else {
         return json(400, { error: 'Unknown stats event.' });
       }

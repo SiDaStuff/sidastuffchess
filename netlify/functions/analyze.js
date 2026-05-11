@@ -1,6 +1,18 @@
 const { ServerStockfishEngine } = require('./_lib/stockfish-engine');
 const { loadAnalyzer, loadChess } = require('./_lib/analysis-loader');
-const { incrementPublicStats } = require('./_lib/firebase-stats');
+const { incrementPublicStats, claimUniqueBrilliantMoves } = require('./_lib/firebase-stats');
+
+const SERVER_REVIEW_PROFILE = {
+  depth: 14,
+  multiPv: 3,
+  timeoutMs: 7000,
+};
+
+function brilliantMoveKey(entry) {
+  if (!entry || entry.classificationKey !== 'BRILLIANT' || !entry.fen || !entry.moveUci) return '';
+  const positionKey = String(entry.fen).split(/\s+/).slice(0, 4).join(' ');
+  return `${positionKey}|${entry.moveUci}`;
+}
 
 const json = (statusCode, body) => ({
   statusCode,
@@ -28,22 +40,20 @@ exports.handler = async (event) => {
 	  if (moves.length > 120) {
 	    return json(413, { error: 'Server review is capped at 120 plies. Use browser review for longer games.' });
 	  }
-	  if (positions.length > 8) {
-	    return json(413, { error: 'Server eval chunks are capped at 8 positions.' });
+	  if (positions.length > 1) {
+	    return json(413, { error: 'Server eval chunks are capped at 1 position.' });
 	  }
 	
 	  const Chess = loadChess();
 		  const { MoveAnalyzer } = loadAnalyzer();
 		  const analyzer = new MoveAnalyzer();
 		  const profile = payload.profile || {};
-		  const workSize = positions.length || moves.length;
-		  const maxDepth = positions.length ? 14 : workSize > 80 ? 6 : workSize > 50 ? 8 : 14;
-		  const minDepth = positions.length ? 8 : 6;
-		  const maxTimeout = positions.length ? 1400 : workSize > 80 ? 450 : workSize > 50 ? 700 : 9000;
 		  analyzer.setReviewProfile({
-		    depth: Math.max(minDepth, Math.min(Number(profile.depth) || maxDepth, maxDepth)),
-		    multiPv: Math.max(1, Math.min(Number(profile.multiPv) || 1, positions.length ? 1 : 3)),
-		    timeoutMs: Math.max(120, Math.min(Number(profile.timeoutMs) || maxTimeout, maxTimeout)),
+		    depth: SERVER_REVIEW_PROFILE.depth,
+		    multiPv: positions.length
+		      ? Math.max(1, Math.min(Number(profile.multiPv) || 1, 1))
+		      : SERVER_REVIEW_PROFILE.multiPv,
+		    timeoutMs: SERVER_REVIEW_PROFILE.timeoutMs,
 		  });
 
   const initialFen = payload.initialFen || payload.headers?.FEN || undefined;
@@ -71,10 +81,14 @@ exports.handler = async (event) => {
 	      analyzer._mateThreat = () => null;
 	    }
 	    const results = await analyzer.analyzeGame(moves, engine, null, { initialFen, headers: payload.headers || {} });
-	    const brilliantMoves = results.filter((entry) => entry.classificationKey === 'BRILLIANT').length;
-	    incrementPublicStats({ gamesAnalyzed: 1, brilliantMoves }).catch((err) => {
+	    const brilliantMoveKeys = results.map(brilliantMoveKey).filter(Boolean);
+	    let publicStats = null;
+	    try {
+	      const brilliantMoves = await claimUniqueBrilliantMoves(brilliantMoveKeys);
+	      publicStats = await incrementPublicStats({ movesAnalyzed: moves.length, brilliantMoves });
+	    } catch (err) {
 	      console.warn('Could not update public stats:', err.message);
-	    });
+	    }
     const plainResults = results.map((entry) => ({
       ...entry,
       classification: undefined,
@@ -104,6 +118,7 @@ exports.handler = async (event) => {
       depth: analyzer.analysisDepth,
       multiPv: analyzer.multiPvCount,
       source: 'netlify',
+      publicStats,
     });
   } catch (err) {
     console.error('Server analysis failed:', err);

@@ -9,15 +9,20 @@ function stockfishEnginePath() {
   } catch (_err) {
     packageRoot = path.resolve(process.cwd(), 'node_modules/stockfish');
   }
-  const candidates = [
-    packageRoot ? path.join(packageRoot, 'bin', 'stockfish-18-lite-single.js') : '',
-    path.resolve(__dirname, '../../node_modules/stockfish/bin/stockfish-18-lite-single.js'),
-    path.resolve(__dirname, '../../../node_modules/stockfish/bin/stockfish-18-lite-single.js'),
-    path.resolve(process.cwd(), 'node_modules/stockfish/bin/stockfish-18-lite-single.js'),
+  const preferFullEngine = String(process.env.SERVER_STOCKFISH_ENGINE || '').toLowerCase() === 'full';
+  const engineFiles = preferFullEngine
+    ? ['stockfish-18-single.js', 'stockfish-18-lite-single.js']
+    : ['stockfish-18-lite-single.js', 'stockfish-18-single.js'];
+  const roots = [
+    packageRoot ? path.join(packageRoot, 'bin') : '',
+    path.resolve(__dirname, '../../node_modules/stockfish/bin'),
+    path.resolve(__dirname, '../../../node_modules/stockfish/bin'),
+    path.resolve(process.cwd(), 'node_modules/stockfish/bin'),
   ].filter(Boolean);
+  const candidates = roots.flatMap((root) => engineFiles.map((file) => path.join(root, file)));
   const found = candidates.find((candidate) => fs.existsSync(candidate));
   if (!found) {
-    throw new Error(`Cannot find Stockfish lite single engine. Checked: ${candidates.join(', ')}`);
+    throw new Error(`Cannot find a server Stockfish engine. Checked: ${candidates.join(', ')}`);
   }
   return found;
 }
@@ -92,7 +97,7 @@ class ServerStockfishEngine {
   async configure() {
     this._cancelActiveSearch();
     this._send('stop');
-	    this._send('setoption name Hash value 8');
+	    this._send('setoption name Hash value 16');
 	    this._send('setoption name Threads value 1');
 	    this._send('setoption name MultiPV value 1');
 	    this.currentMultiPv = 1;
@@ -120,7 +125,7 @@ class ServerStockfishEngine {
 	    await wait;
 	  }
 
-	  async evaluate(fen, depth = 10, timeoutMs = 9000) {
+	  async evaluate(fen, depth = 14, timeoutMs = 7000) {
 	    if (!this.ready) throw new Error('Engine not ready');
 	    this._cancelActiveSearch();
 	    this._send('stop');
@@ -172,7 +177,7 @@ class ServerStockfishEngine {
     });
   }
 
-	  async evaluateMultiPV(fen, depth = 10, numPV = 2, timeoutMs = 12000) {
+	  async evaluateMultiPV(fen, depth = 14, numPV = 3, timeoutMs = 7000) {
 	    if (!this.ready) throw new Error('Engine not ready');
 	    this._cancelActiveSearch();
 	    this._send('stop');

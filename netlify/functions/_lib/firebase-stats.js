@@ -118,8 +118,10 @@ async function firebaseRequest(path, options = {}, body = null) {
 }
 
 function normalizeStats(raw = {}) {
+  const hasMovesAnalyzed = Object.prototype.hasOwnProperty.call(raw, 'movesAnalyzed');
   return {
     gamesAnalyzed: Math.max(0, Number(raw.gamesAnalyzed) || 0),
+    movesAnalyzed: Math.max(0, Number(hasMovesAnalyzed ? raw.movesAnalyzed : raw.gamesAnalyzed) || 0),
     coachGamesPlayed: Math.max(0, Number(raw.coachGamesPlayed) || 0),
     brilliantMoves: Math.max(0, Number(raw.brilliantMoves) || 0),
     updatedAt: Number(raw.updatedAt) || 0,
@@ -134,10 +136,11 @@ async function getPublicStats() {
 async function incrementPublicStats(delta = {}) {
   const cleanDelta = {
     gamesAnalyzed: Math.max(0, Number(delta.gamesAnalyzed) || 0),
+    movesAnalyzed: Math.max(0, Number(delta.movesAnalyzed) || 0),
     coachGamesPlayed: Math.max(0, Number(delta.coachGamesPlayed) || 0),
     brilliantMoves: Math.max(0, Number(delta.brilliantMoves) || 0),
   };
-  if (!cleanDelta.gamesAnalyzed && !cleanDelta.coachGamesPlayed && !cleanDelta.brilliantMoves) {
+  if (!cleanDelta.gamesAnalyzed && !cleanDelta.movesAnalyzed && !cleanDelta.coachGamesPlayed && !cleanDelta.brilliantMoves) {
     return getPublicStats();
   }
 
@@ -149,6 +152,7 @@ async function incrementPublicStats(delta = {}) {
     const current = normalizeStats(currentResponse.json || {});
     const next = {
       gamesAnalyzed: current.gamesAnalyzed + cleanDelta.gamesAnalyzed,
+      movesAnalyzed: current.movesAnalyzed + cleanDelta.movesAnalyzed,
       coachGamesPlayed: current.coachGamesPlayed + cleanDelta.coachGamesPlayed,
       brilliantMoves: current.brilliantMoves + cleanDelta.brilliantMoves,
       updatedAt: Date.now(),
@@ -171,7 +175,47 @@ async function incrementPublicStats(delta = {}) {
   return getPublicStats();
 }
 
+function brilliantMoveStorageKey(rawKey) {
+  const value = String(rawKey || '').trim();
+  if (!value) return '';
+  return crypto.createHash('sha256').update(`brilliant-move:v1:${value}`).digest('hex');
+}
+
+async function claimUniqueBrilliantMoves(rawKeys = []) {
+  const keys = [...new Set((Array.isArray(rawKeys) ? rawKeys : [])
+    .map(brilliantMoveStorageKey)
+    .filter(Boolean))];
+  let claimed = 0;
+
+  for (const key of keys) {
+    const path = `/publicStatsBrilliantMoves/${key}.json`;
+    const currentResponse = await firebaseRequest(path, {
+      method: 'GET',
+      headers: { 'X-Firebase-ETag': 'true' },
+    });
+    if (currentResponse.json !== null && currentResponse.json !== undefined) continue;
+
+    const body = JSON.stringify(Date.now());
+    try {
+      await firebaseRequest(path, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'if-match': currentResponse.headers.etag || 'null_etag',
+        },
+      }, body);
+      claimed += 1;
+    } catch (err) {
+      if (err.statusCode !== 412) throw err;
+    }
+  }
+
+  return claimed;
+}
+
 module.exports = {
   getPublicStats,
   incrementPublicStats,
+  claimUniqueBrilliantMoves,
 };
