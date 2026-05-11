@@ -110,8 +110,12 @@ class BrowserMoveCoach {
 		    } else if (mateTrap) {
 		      statements.push(`If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; declining it leaves the pressure.`);
 		    } else if (key === 'BRILLIANT') {
+		      const drawResource = this.analyzer._acceptedOfferDrawResource(payload.fenBefore, payload.moveSan);
+		      if (drawResource) {
+		        statements.push(`If ${drawResource.captureSan} accepts the sacrifice, the result is drawn. This is a defensive resource, not an attacking bait.`);
+		      }
 		      const offer = this.analyzer._materialOfferAfterMove(payload.fenBefore, payload.moveSan);
-		      if (offer) {
+		      if (offer && !drawResource) {
 		        const offered = this.pieceNames[offer.captured] || 'piece';
 		        const grab = offer.san ? `${offer.san}` : `a capture on ${offer.to}`;
 		        statements.push(`It invites ${grab}, but the ${offered} is bait for the attack.`);
@@ -153,6 +157,9 @@ class BrowserMoveCoach {
 
 	  _classificationStatement(key, payload, move) {
 	    const san = move.san || payload.moveSan || 'This move';
+	    if (key === 'BRILLIANT' && this.analyzer._acceptedOfferDrawResource(payload.fenBefore, payload.moveSan)) {
+	      return `${san} is brilliant because it is a hard-to-find drawing resource.`;
+	    }
 	    const epLoss = typeof payload.expectedLoss === 'number'
 	      ? Math.round(payload.expectedLoss * 100)
 	      : null;
@@ -953,6 +960,7 @@ class MoveAnalyzer {
 				    const kingPressureOffer = !!materialOffer && this._kingPressureMove(fenBefore, moveSan);
 				    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan) || kingPressureOffer;
 				    const ordinaryCaptureTrade = this._ordinaryCaptureTrade(fenBefore, moveSan);
+				    const drawResource = this._acceptedOfferDrawResource(fenBefore, moveSan);
 				    const losesMaterialOrGame = !!opponentMateAfter
 				      || playerEdgeAfter <= -9000
 				      || this._opponentMaterialTacticAfter(fenBefore, moveSan);
@@ -980,8 +988,17 @@ class MoveAnalyzer {
 			      return MoveClassification.BRILLIANT;
 			    }
 
-	    const rareBestSacrifice = goodPieceSacrifice
-	      && nearlyBest
+		    if (drawResource
+		      && nearlyBest
+		      && !opponentMateAfter
+		      && positionAfterOk
+		      && !wasAlreadyCrushing
+		      && afterExpected >= Math.max(0.48, beforeExpected - 0.02)) {
+		      return MoveClassification.BRILLIANT;
+		    }
+
+		    const rareBestSacrifice = goodPieceSacrifice
+		      && nearlyBest
 		      && gapToSecond >= 70
 		      && !ordinaryCaptureTrade
 		      && playerEdgeAfter >= playerEdgeBefore - 20
@@ -1042,8 +1059,8 @@ class MoveAnalyzer {
 		    if (expectedLoss > 0.10 * tolerance || effectiveCpLoss >= 155 * tolerance) return MoveClassification.MISTAKE;
 	    if (expectedLoss > 0.05 * tolerance || effectiveCpLoss >= 70 * tolerance) return MoveClassification.INACCURACY;
 
-	    const wasCloseGame = Math.abs(scoreBefore) < 180;
-	    const stillClose = Math.abs(scoreAfter) < 220;
+		    const wasCloseGame = Math.abs(scoreBefore) < 180;
+		    const stillClose = Math.abs(scoreAfter) < 220;
     const uniqueBest = gapToSecond >= 120;
 
 			    if (!ordinaryCaptureTrade
@@ -1056,14 +1073,12 @@ class MoveAnalyzer {
 	      return MoveClassification.BRILLIANT;
 	    }
 	
-			    const rescueOrConversion = (beforeExpected <= 0.34 && afterExpected >= 0.45)
-			      || (beforeExpected >= 0.38 && beforeExpected <= 0.62 && afterExpected >= 0.72);
-			    const courseChangingOnlyMove = nearlyBest
-			      && gapToSecond >= 240
-			      && !wasAlreadyCrushing
-			      && beforeExpected >= 0.28
-			      && beforeExpected <= 0.82
-			      && (opponentJustBlundered || gapToSecond >= 320 || rescueOrConversion);
+		    const rescueOrConversion = beforeExpected <= 0.36 && afterExpected >= 0.48;
+		    const courseChangingOnlyMove = nearlyBest
+		      && gapToSecond >= 240
+		      && !wasAlreadyCrushing
+		      && beforeExpected <= 0.40
+		      && (opponentJustBlundered || gapToSecond >= 320 || rescueOrConversion);
 			    if (isBestMove && !goodPieceSacrifice && (courseChangingOnlyMove || rescueOrConversion)) {
 			      return MoveClassification.GREAT;
 			    }
@@ -1117,7 +1132,6 @@ class MoveAnalyzer {
 		    const board = new Chess(fenBefore);
 		    const moveObj = board.move(moveSan, { sloppy: true });
 		    if (!moveObj || !moveObj.captured) return false;
-		    if (/[+#]/.test(moveObj.san || '')) return false;
 
 		    const value = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 		    const movedValue = value[moveObj.piece] || 0;
@@ -1129,7 +1143,52 @@ class MoveAnalyzer {
 		    return replyCaptures.length > 0 || capturedValue === movedValue;
 		  }
 
-		  _opponentMaterialTacticAfter(fenBefore, moveSan) {
+		  _acceptedOfferDrawResource(fenBefore, moveSan) {
+		    if (!fenBefore || !moveSan) return null;
+		    const board = new Chess(fenBefore);
+		    const moveObj = board.move(moveSan, { sloppy: true });
+		    if (!moveObj || board.in_checkmate()) return null;
+
+		    const value = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+		    const offeredValue = value[moveObj.piece] || 0;
+		    if (offeredValue < 3) return null;
+
+		    const acceptingReplies = board.moves({ verbose: true })
+		      .filter((reply) => reply.to === moveObj.to && reply.captured === moveObj.piece);
+
+		    for (const reply of acceptingReplies) {
+		      const accepted = board.move(reply.san);
+		      if (!accepted) continue;
+		      const isDraw = board.in_draw()
+		        || board.in_stalemate?.()
+		        || board.insufficient_material?.()
+		        || this._bareKingsOrNoWinningMaterial(board);
+		      board.undo();
+		      if (isDraw) {
+		        return {
+		          captureSan: reply.san,
+		          capturedPiece: moveObj.piece,
+		          square: moveObj.to,
+		        };
+		      }
+		    }
+
+		    return null;
+		  }
+
+		  _bareKingsOrNoWinningMaterial(chess) {
+		    const pieces = [];
+		    for (const row of chess.board()) {
+		      for (const piece of row) {
+		        if (piece && piece.type !== 'k') pieces.push(piece);
+		      }
+		    }
+		    if (pieces.length === 0) return true;
+		    if (pieces.length === 1 && ['b', 'n'].includes(pieces[0].type)) return true;
+		    return false;
+		  }
+
+			  _opponentMaterialTacticAfter(fenBefore, moveSan) {
 		    if (!fenBefore || !moveSan) return false;
 		    const board = new Chess(fenBefore);
 		    const moveObj = board.move(moveSan, { sloppy: true });
@@ -1533,6 +1592,10 @@ class MoveAnalyzer {
 	    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
 	
 		    if (key === 'BRILLIANT') {
+		      const drawResource = this._acceptedOfferDrawResource(fenBefore, moveSan);
+		      if (drawResource) {
+		        return `${moveSan} is brilliant. If ${drawResource.captureSan} takes the sacrifice, the position is drawn, so this saves the game instead of playing for an attack.`;
+		      }
 		      if (mateTrap) {
 		        return `${moveSan} is brilliant. If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; otherwise the pressure stays.`;
 		      }
@@ -1542,9 +1605,9 @@ class MoveAnalyzer {
 		      }
 		      return `${moveSan} is brilliant. You found the only real tactical idea and kept the attack alive.`;
 		    }
-	    if (key === 'GREAT') {
-	      return `${moveSan} is great. It altered the course of the game; alternatives would have let the position slip.`;
-	    }
+		    if (key === 'GREAT') {
+		      return `${moveSan} is great. It altered the course of the game by rescuing a losing position.`;
+		    }
 	    if (key === 'BEST') {
 	      return `${moveSan} is best. It is the engine's top choice.`;
 	    }

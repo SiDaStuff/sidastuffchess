@@ -87,7 +87,8 @@ class ChessReviewApp {
   }
 
 	  _bindElements() {
-	    this.elMainMenu = document.getElementById('main-menu');
+		    this.elMainMenu = document.getElementById('main-menu');
+	    this.elPublicStats = document.getElementById('public-stats');
 	    this.elStatsGamesAnalyzed = document.getElementById('stats-games-analyzed');
 	    this.elStatsCoachGames = document.getElementById('stats-coach-games');
 	    this.elStatsBrilliantMoves = document.getElementById('stats-brilliant-moves');
@@ -267,12 +268,14 @@ class ChessReviewApp {
 	  }
 
 	  _renderPublicStats(stats = {}) {
+	    this.elPublicStats?.classList.remove('stats-loading');
 	    if (this.elStatsGamesAnalyzed) this.elStatsGamesAnalyzed.textContent = this._formatPublicStat(stats.gamesAnalyzed);
 	    if (this.elStatsCoachGames) this.elStatsCoachGames.textContent = this._formatPublicStat(stats.coachGamesPlayed);
 	    if (this.elStatsBrilliantMoves) this.elStatsBrilliantMoves.textContent = this._formatPublicStat(stats.brilliantMoves);
 	  }
 
-		  async _loadPublicStats() {
+	  async _loadPublicStats() {
+	    this.elPublicStats?.classList.add('stats-loading');
 	    try {
 	      const response = await fetch('/.netlify/functions/public-stats', { cache: 'no-store' });
 	      if (!response.ok) throw new Error(`Stats responded with ${response.status}`);
@@ -669,13 +672,24 @@ class ChessReviewApp {
     }
   }
 
-  _renderIdleEngineInfo(message) {
-    const source = ENGINE_CATALOG[this.engineSettings.source]?.label || 'Engine';
-    const moduleConfig = getEngineModuleConfig(this.engineSettings.source, this.engineSettings.module);
-    const reviewProfile = this._getReviewProfile();
-    const location = this.engineSettings.analysisLocation === 'netlify' ? 'Server review' : 'Browser review';
-    this.elEngineLine.textContent = message || `${source} | ${moduleConfig.label} | ${reviewProfile.label} | ${location} | MultiPV ${reviewProfile.multiPv}`;
-  }
+	  _renderIdleEngineInfo(message) {
+	    const source = ENGINE_CATALOG[this.engineSettings.source]?.label || 'Engine';
+	    const moduleConfig = getEngineModuleConfig(this.engineSettings.source, this.engineSettings.module);
+	    const reviewProfile = this._getReviewProfile();
+	    const location = this.engineSettings.analysisLocation === 'netlify' ? 'Server review' : 'Browser review';
+	    this.elEngineLine.textContent = message || `${source} | ${moduleConfig.label} | ${reviewProfile.label} | ${location} | MultiPV ${reviewProfile.multiPv}`;
+	  }
+
+	  _renderPostReviewEvalPanel() {
+	    const source = this.engineSettings.analysisLocation === 'netlify' ? 'Server review' : 'Browser review';
+	    this._updateLiveEvalPanel({
+	      busy: false,
+	      score: this.analysisResults?.[0]?.evalBefore ?? this.currentEvalScore,
+	      line: 'Review complete.',
+	      meta: source,
+	    });
+	    this._renderIdleEngineInfo('Review complete. Select a move for details.');
+	  }
 
   _setLiveEvalLoading(isLoading, label = 'Live eval') {
     if (!this.elLiveEvalStatus) return;
@@ -2719,9 +2733,11 @@ class ChessReviewApp {
 
     const result = this.analysisResults?.[index] || this.liveMoveResults?.[index];
 
-	    if (result && !result.isCoachMove) {
-	      const cls = result.classification;
-	      const icon = document.createElement('span');
+		    const shownMoveBadges = new Set(['BRILLIANT', 'GREAT', 'MISS', 'MISTAKE', 'INACCURACY', 'BLUNDER']);
+		    const classificationKey = result?.classificationKey || this.analyzer.getClassificationKey(result?.classification);
+		    if (result && !result.isCoachMove && shownMoveBadges.has(classificationKey)) {
+		      const cls = result.classification;
+		      const icon = document.createElement('span');
       icon.className = this._classificationIconClass(cls, 'move-icon');
       icon.style.background = cls.color;
       icon.textContent = cls.icon;
@@ -2805,7 +2821,8 @@ class ChessReviewApp {
 		    const end = clamp(options.end ?? this.gameMoves.length - 1, start, this.gameMoves.length - 1);
 		    const minDelay = options.minDelay ?? 170;
 		    const maxDelay = options.maxDelay ?? 760;
-		    let index = start;
+		    const current = Number.isInteger(this.currentMoveIndex) ? this.currentMoveIndex : start;
+		    let index = clamp(options.initialIndex ?? (current >= start && current <= end ? current : start), start, end);
 		    let direction = 1;
 
 		    const tick = () => {
@@ -2913,10 +2930,11 @@ class ChessReviewApp {
 	      }
 	
 	      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
-      this._showReviewSummary();
-      this._renderMoveList();
-      this._renderCriticalMoments();
-      this._goToMove(0);
+	      this._showReviewSummary();
+	      this._renderMoveList();
+	      this._renderCriticalMoments();
+	      this._renderPostReviewEvalPanel();
+	      this._goToMove(0);
 	    } catch (err) {
 	      console.error('Analysis error:', err);
 	      this._showPopup({
@@ -3104,7 +3122,14 @@ class ChessReviewApp {
 	      timeoutMs: total > 90 ? 320 : 550,
 	    };
 
-	    const evals = [];
+		    const evals = [];
+		    this._startReviewPlayback({
+		      start: 0,
+		      end: Math.max(0, this.gameMoves.length - 1),
+		      initialIndex: Math.max(0, this.currentMoveIndex),
+		      minDelay: total > 90 ? 75 : 105,
+		      maxDelay: total > 90 ? 360 : 460,
+		    });
 		    for (let i = 0; i < chunks.length; i += 1) {
 		      const chunk = chunks[i];
 		      const pct = 12 + Math.round((chunk.start / Math.max(1, total - 1)) * 76);
@@ -3117,12 +3142,6 @@ class ChessReviewApp {
 		        score: null,
 		        line: `Server review chunk ${i + 1}/${chunks.length}`,
 		        meta: `Showing moves ${startMove + 1}-${endMove + 1} while the server analyzes positions ${chunk.start + 1}-${chunk.start + chunk.positions.length} of ${total}.`,
-		      });
-		      this._startReviewPlayback({
-		        start: startMove,
-		        end: endMove,
-		        minDelay: total > 90 ? 120 : 170,
-		        maxDelay: total > 90 ? 520 : 760,
 		      });
 	
 		      const chunkEvals = await this._fetchServerEvalChunk(chunk.positions, serverProfile, i, chunks.length);

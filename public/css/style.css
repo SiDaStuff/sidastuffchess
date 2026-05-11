@@ -250,11 +250,36 @@ body:not(.menu-active) .main-menu {
   color: var(--text-primary);
 }
 
+.stats-loading .public-stat-value,
+.stats-loading .public-stat-label {
+  display: inline-block;
+  color: transparent;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #edf2f6 0%, #ffffff 48%, #edf2f6 100%);
+  background-size: 220% 100%;
+  animation: statsSkeleton 1.15s ease-in-out infinite;
+}
+
+.stats-loading .public-stat-value {
+  width: 72px;
+  height: 1.5rem;
+}
+
+.stats-loading .public-stat-label {
+  width: 96px;
+  height: 0.82rem;
+}
+
 .public-stat-label {
   font-size: 0.74rem;
   font-weight: 700;
   color: var(--text-secondary);
   text-align: center;
+}
+
+@keyframes statsSkeleton {
+  0% { background-position: 160% 0; }
+  100% { background-position: -60% 0; }
 }
 
 .main-menu-status {
