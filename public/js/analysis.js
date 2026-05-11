@@ -748,21 +748,83 @@ class MoveAnalyzer {
     return Math.max(0, secondScore - bestScore);
   }
 
-	  _pieceName(pieceType) {
-	    const names = {
-      p: 'pawn',
-      n: 'knight',
+		  _pieceName(pieceType) {
+		    const names = {
+	      p: 'pawn',
+	      n: 'knight',
       b: 'bishop',
       r: 'rook',
       q: 'queen',
       k: 'king',
     };
-	    return names[pieceType] || 'piece';
-	  }
+		    return names[pieceType] || 'piece';
+		  }
 
-	  _isBackRank(square, color) {
-	    return !!square && square[1] === (color === 'w' ? '1' : '8');
-	  }
+		  _boardMap(fen) {
+		    const chess = new Chess(fen);
+		    const board = {};
+		    for (const file of 'abcdefgh') {
+		      for (const rank of '12345678') {
+		        const square = file + rank;
+		        const piece = chess.get(square);
+		        if (piece) board[square] = piece;
+		      }
+		    }
+		    return board;
+		  }
+
+		  _pieceAt(fen, square) {
+		    const chess = new Chess(fen);
+		    return chess.get(square);
+		  }
+
+		  _attacksFrom(fen, square, color, type) {
+		    if (!square || !type) return [];
+		    const board = this._boardMap(fen);
+		    const file = square.charCodeAt(0) - 97;
+		    const rank = parseInt(square[1], 10) - 1;
+		    const out = [];
+		    const add = (f, r) => {
+		      if (f < 0 || f > 7 || r < 0 || r > 7) return false;
+		      const target = String.fromCharCode(97 + f) + (r + 1);
+		      const targetPiece = board[target];
+		      if (!targetPiece) {
+		        out.push(target);
+		        return true;
+		      }
+		      if (targetPiece.color !== color) out.push(target);
+		      return false;
+		    };
+		    const slide = (dirs) => {
+		      for (const [df, dr] of dirs) {
+		        for (let f = file + df, r = rank + dr; f >= 0 && f <= 7 && r >= 0 && r <= 7; f += df, r += dr) {
+		          if (!add(f, r)) break;
+		        }
+		      }
+		    };
+
+		    if (type === 'p') {
+		      const dir = color === 'w' ? 1 : -1;
+		      add(file - 1, rank + dir);
+		      add(file + 1, rank + dir);
+		    } else if (type === 'n') {
+		      [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]].forEach(([df, dr]) => add(file + df, rank + dr));
+		    } else if (type === 'b') {
+		      slide([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
+		    } else if (type === 'r') {
+		      slide([[1, 0], [-1, 0], [0, 1], [0, -1]]);
+		    } else if (type === 'q') {
+		      slide([[1, 1], [1, -1], [-1, 1], [-1, -1], [1, 0], [-1, 0], [0, 1], [0, -1]]);
+		    } else if (type === 'k') {
+		      [[1, 1], [1, 0], [1, -1], [0, 1], [0, -1], [-1, 1], [-1, 0], [-1, -1]].forEach(([df, dr]) => add(file + df, rank + dr));
+		    }
+
+		    return out;
+		  }
+
+		  _isBackRank(square, color) {
+		    return !!square && square[1] === (color === 'w' ? '1' : '8');
+		  }
 
   _describeBestMove(fen, bestMoveUci, bestMoveSan) {
     if (!fen || !bestMoveUci || bestMoveUci.length < 4) {

@@ -127,13 +127,13 @@ body:not(.menu-active) .main-menu {
   display: none;
 }
 
-.main-menu {
-  position: relative;
-  min-height: 100vh;
-  display: grid;
-  grid-template-rows: 1fr auto auto 1fr;
-  place-items: center;
-  gap: 14px;
+	.main-menu {
+	  position: relative;
+	  min-height: 100vh;
+	  display: grid;
+	  grid-template-rows: 1fr auto auto auto auto 1fr;
+	  place-items: center;
+	  gap: 14px;
   padding: 32px 20px;
   background:
     linear-gradient(180deg, rgba(255,255,255,0.82), rgba(244,246,248,0.94)),
@@ -215,8 +215,46 @@ body:not(.menu-active) .main-menu {
   transform: translateY(-1px);
 }
 
-.menu-button-primary:hover {
-  background: var(--bg-strong);
+	.menu-button-primary:hover {
+	  background: var(--bg-strong);
+	}
+
+.public-stats {
+  position: relative;
+  z-index: 1;
+  width: min(560px, 100%);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.public-stat {
+  min-height: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 10px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(18, 31, 42, 0.06);
+}
+
+.public-stat-value {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: clamp(1.12rem, 4vw, 1.7rem);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.public-stat-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-align: center;
 }
 
 .main-menu-status {
@@ -2391,12 +2429,23 @@ body[data-mode="coach"] .analysis-overview {
     grid-template-columns: 1fr;
   }
 
-  .main-menu-actions {
+	  .main-menu-actions {
+	    grid-template-columns: 1fr;
+	  }
+
+  .public-stats {
     grid-template-columns: 1fr;
+    width: min(460px, 100%);
   }
 
-	  .main-menu-brand {
-	    font-size: 1.6rem;
+  .public-stat {
+    min-height: 58px;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+		  .main-menu-brand {
+		    font-size: 1.6rem;
 	  }
 }
 

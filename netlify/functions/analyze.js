@@ -1,5 +1,6 @@
 const { ServerStockfishEngine } = require('./_lib/stockfish-engine');
 const { loadAnalyzer, loadChess } = require('./_lib/analysis-loader');
+const { incrementPublicStats } = require('./_lib/firebase-stats');
 
 const json = (statusCode, body) => ({
   statusCode,
@@ -69,6 +70,10 @@ exports.handler = async (event) => {
 	      analyzer._mateThreat = () => null;
 	    }
 	    const results = await analyzer.analyzeGame(moves, engine, null, { initialFen, headers: payload.headers || {} });
+	    const brilliantMoves = results.filter((entry) => entry.classificationKey === 'BRILLIANT').length;
+	    incrementPublicStats({ gamesAnalyzed: 1, brilliantMoves }).catch((err) => {
+	      console.warn('Could not update public stats:', err.message);
+	    });
     const plainResults = results.map((entry) => ({
       ...entry,
       classification: undefined,

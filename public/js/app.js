@@ -25,8 +25,9 @@ class ChessReviewApp {
 	    this.liveMoveResults = [];
 	    this.explorerReturnState = null;
 	    this.isAnalyzing = false;
-    this.autoPlaying = false;
-    this.liveEvalHistory = [];
+	    this.autoPlaying = false;
+	    this.reviewPlaybackTimer = null;
+	    this.liveEvalHistory = [];
     this.lastLiveEvalFen = '';
     this.gameStatus = null;
     this.currentEvalScore = 0;
@@ -78,15 +79,19 @@ class ChessReviewApp {
     this._syncPlayerNameplates();
     this._syncCoachVisibility();
     this._initEngine();
-    this._updateBoard();
-    this._updateLiveEvalPanel();
-    this._resetInsightPanel();
-    window.addEventListener('resize', () => this._updateEvalBar(this.currentEvalScore), { passive: true });
+	    this._updateBoard();
+	    this._updateLiveEvalPanel();
+	    this._resetInsightPanel();
+	    this._loadPublicStats();
+	    window.addEventListener('resize', () => this._updateEvalBar(this.currentEvalScore), { passive: true });
   }
 
 	  _bindElements() {
 	    this.elMainMenu = document.getElementById('main-menu');
-    this.elBtnMenuImport = document.getElementById('btn-menu-import');
+	    this.elStatsGamesAnalyzed = document.getElementById('stats-games-analyzed');
+	    this.elStatsCoachGames = document.getElementById('stats-coach-games');
+	    this.elStatsBrilliantMoves = document.getElementById('stats-brilliant-moves');
+	    this.elBtnMenuImport = document.getElementById('btn-menu-import');
     this.elBtnMenuCoach = document.getElementById('btn-menu-coach');
     this.elBtnBackMenu = document.getElementById('btn-back-menu');
     this.elEngineChoiceModal = document.getElementById('engine-choice-modal');
@@ -245,16 +250,61 @@ class ChessReviewApp {
 		    return Promise.resolve({ isConfirmed: confirmed, isDismissed: !confirmed });
 		  }
 
-  _setButtonLabel(button, label) {
-    const target = button?.querySelector('.btn-label');
-    if (target) {
-      target.textContent = label;
-      return;
-    }
-    if (button) button.textContent = label;
-  }
+	  _setButtonLabel(button, label) {
+	    const target = button?.querySelector('.btn-label');
+	    if (target) {
+	      target.textContent = label;
+	      return;
+	    }
+	    if (button) button.textContent = label;
+	  }
 
-	  _bindEvents() {
+	  _formatPublicStat(value) {
+	    const number = Math.max(0, Number(value) || 0);
+	    if (number >= 1000000) return `${(number / 1000000).toFixed(number >= 10000000 ? 0 : 1)}M`;
+	    if (number >= 10000) return `${Math.round(number / 1000)}k`;
+	    return number.toLocaleString();
+	  }
+
+	  _renderPublicStats(stats = {}) {
+	    if (this.elStatsGamesAnalyzed) this.elStatsGamesAnalyzed.textContent = this._formatPublicStat(stats.gamesAnalyzed);
+	    if (this.elStatsCoachGames) this.elStatsCoachGames.textContent = this._formatPublicStat(stats.coachGamesPlayed);
+	    if (this.elStatsBrilliantMoves) this.elStatsBrilliantMoves.textContent = this._formatPublicStat(stats.brilliantMoves);
+	  }
+
+		  async _loadPublicStats() {
+	    try {
+	      const response = await fetch('/.netlify/functions/public-stats', { cache: 'no-store' });
+	      if (!response.ok) throw new Error(`Stats responded with ${response.status}`);
+	      const data = await response.json();
+	      this._renderPublicStats(data.stats || {});
+	    } catch (_err) {
+	      this._renderPublicStats({ gamesAnalyzed: 0, coachGamesPlayed: 0, brilliantMoves: 0 });
+	    }
+	  }
+
+	  async _recordPublicStatEvent(event, extra = {}) {
+	    try {
+	      const response = await fetch('/.netlify/functions/public-stats', {
+	        method: 'POST',
+	        headers: { 'Content-Type': 'application/json' },
+	        body: JSON.stringify({ event, ...extra }),
+	      });
+	      if (!response.ok) return;
+	      const data = await response.json();
+	      this._renderPublicStats(data.stats || {});
+	    } catch (_err) {
+	      // Stats are public polish, never block chess.
+	    }
+	  }
+
+	  _brilliantMoveCount(results = this.analysisResults) {
+	    return Array.isArray(results)
+	      ? results.filter((entry) => entry?.classificationKey === 'BRILLIANT').length
+	      : 0;
+	  }
+	
+		  _bindEvents() {
     this.elBtnMenuImport?.addEventListener('click', () => this._showEngineChoiceModal('import'));
     this.elBtnMenuCoach?.addEventListener('click', () => this._showEngineChoiceModal('coach'));
     this.elBtnBackMenu?.addEventListener('click', () => this._showMainMenu());
@@ -1003,8 +1053,8 @@ class ChessReviewApp {
     if (this.elCoachElo) this.elCoachElo.value = String(elo);
     if (this.elCoachSkill) this.elCoachSkill.value = skill;
 
-    this.coachMode = {
-      active: true,
+		    this.coachMode = {
+	      active: true,
       humanColor,
 	      elo,
 	      skill,
@@ -1019,9 +1069,10 @@ class ChessReviewApp {
 	      hintLevel: 0,
 	      hintFen: '',
 	      hintMove: '',
-	    };
+		    };
+		    this._recordPublicStatEvent('coach_game_started');
 
-	    this._loadGame([], {
+		    this._loadGame([], {
 	      Event: 'Coach',
 	      White: humanColor === 'w' ? 'You' : 'Coach',
 	      Black: humanColor === 'b' ? 'You' : 'Coach',
@@ -2717,10 +2768,10 @@ class ChessReviewApp {
 	    }
 	  }
 
-	  _previewReviewPosition(index) {
-	    let target = index;
-	    if (target < -1) target = -1;
-	    if (target >= this.gameMoves.length) target = this.gameMoves.length - 1;
+		  _previewReviewPosition(index) {
+		    let target = index;
+		    if (target < -1) target = -1;
+		    if (target >= this.gameMoves.length) target = this.gameMoves.length - 1;
 
 	    this.currentMoveIndex = target;
 	    this.chess = new Chess(this.initialFen);
@@ -2742,11 +2793,59 @@ class ChessReviewApp {
 	      : []);
 	    this.board.clearBestMoveArrow();
 	    this.elMoveBadge.style.display = 'none';
-	    this._updateActiveMoveInList();
-	    this._updateCurrentMoveIndicator();
-	  }
-	
-	  async _startReview() {
+		    this._updateActiveMoveInList();
+		    this._updateCurrentMoveIndicator();
+		  }
+
+		  _startReviewPlayback(options = {}) {
+		    this._stopReviewPlayback();
+		    if (!this.gameMoves.length) return;
+
+		    const start = clamp(options.start ?? 0, 0, this.gameMoves.length - 1);
+		    const end = clamp(options.end ?? this.gameMoves.length - 1, start, this.gameMoves.length - 1);
+		    const minDelay = options.minDelay ?? 170;
+		    const maxDelay = options.maxDelay ?? 760;
+		    let index = start;
+		    let direction = 1;
+
+		    const tick = () => {
+		      if (!this.isAnalyzing) {
+		        this._stopReviewPlayback();
+		        return;
+		      }
+
+		      this._previewReviewPosition(index);
+		      const span = Math.max(1, end - start);
+		      const progress = span === 1 ? 1 : (index - start) / span;
+		      const ease = Math.sin(Math.PI * progress);
+		      const delay = Math.round(maxDelay - ((maxDelay - minDelay) * ease));
+
+		      if (start === end) {
+		        index = start;
+		      } else {
+		        index += direction;
+		        if (index >= end) {
+		          index = end;
+		          direction = -1;
+		        } else if (index <= start) {
+		          index = start;
+		          direction = 1;
+		        }
+		      }
+
+		      this.reviewPlaybackTimer = setTimeout(tick, delay);
+		    };
+
+		    tick();
+		  }
+
+		  _stopReviewPlayback() {
+		    if (!this.reviewPlaybackTimer) return;
+		    clearTimeout(this.reviewPlaybackTimer);
+		    this.reviewPlaybackTimer = null;
+		  }
+		
+		  async _startReview() {
     const serverReview = this.engineSettings.analysisLocation === 'netlify';
     if (this.isAnalyzing || this.gameMoves.length === 0 || (!serverReview && !this.engine?.ready)) return;
 
@@ -2776,9 +2875,10 @@ class ChessReviewApp {
       if (this.engineSettings.analysisLocation === 'netlify') {
         try {
           this.analysisResults = await this._analyzeGameOnServer();
-	        } catch (serverErr) {
-	          console.warn('Server analysis failed, falling back to browser:', serverErr);
-	          this.elReviewBtnText.textContent = 'Server unavailable. Using browser...';
+		        } catch (serverErr) {
+		          console.warn('Server analysis failed, falling back to browser:', serverErr);
+		          this._stopReviewPlayback();
+		          this.elReviewBtnText.textContent = 'Server unavailable. Using browser...';
 	          this.elProgressFill.style.width = '0%';
 	          this._updateLiveEvalPanel({
 	            busy: true,
@@ -2796,16 +2896,23 @@ class ChessReviewApp {
 		          { initialFen: this.initialFen, headers: this.gameHeaders }
 		        );
         }
-      } else {
-	        this.analysisResults = await this.analyzer.analyzeGame(
-	          this.gameMoves,
-	          this.engine,
-	          updateReviewProgress,
-		          { initialFen: this.initialFen, headers: this.gameHeaders }
-		        );
-      }
+	      } else {
+		        this.analysisResults = await this.analyzer.analyzeGame(
+		          this.gameMoves,
+		          this.engine,
+		          updateReviewProgress,
+			          { initialFen: this.initialFen, headers: this.gameHeaders }
+			        );
+	      }
 
-      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
+	      if (!this.analysisResults.statsRecorded) {
+	        this._recordPublicStatEvent('game_reviewed', {
+	          brilliantMoves: this._brilliantMoveCount(this.analysisResults),
+	        });
+	        this.analysisResults.statsRecorded = true;
+	      }
+	
+	      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
       this._showReviewSummary();
       this._renderMoveList();
       this._renderCriticalMoments();
@@ -2817,11 +2924,12 @@ class ChessReviewApp {
 	        title: 'Analysis failed',
 	        text: err.message,
 	      });
-	    } finally {
-	      this.isAnalyzing = false;
-	      this._setEngineControlsDisabled(false);
-	      this._syncActionButtons();
-	      this.elReviewBtnText.textContent = this.analysisResults ? 'Re-analyze Game' : 'Start Review';
+		    } finally {
+		      this.isAnalyzing = false;
+		      this._stopReviewPlayback();
+		      this._setEngineControlsDisabled(false);
+		      this._syncActionButtons();
+		      this.elReviewBtnText.textContent = this.analysisResults ? 'Re-analyze Game' : 'Start Review';
 	      this.elProgressBar.style.display = 'none';
 	      this.board.clearLoading();
 	    }
@@ -2838,17 +2946,23 @@ class ChessReviewApp {
 	    const controller = new AbortController();
 		    const timeout = setTimeout(() => controller.abort(), 45000);
 	    let progress = 12;
-	    const progressTimer = setInterval(() => {
-	      progress = Math.min(progress + 3, 68);
-	      this.elProgressFill.style.width = `${progress}%`;
-	      this.elReviewBtnText.textContent = 'Server Reviewing...';
+		    const progressTimer = setInterval(() => {
+		      progress = Math.min(progress + 3, 68);
+		      this.elProgressFill.style.width = `${progress}%`;
+		      this.elReviewBtnText.textContent = 'Server Reviewing...';
 	      this._updateLiveEvalPanel({
 	        busy: true,
 	        score: null,
 	        line: 'Server review is running.',
-	        meta: 'If the server stalls, browser review will continue automatically.',
-	      });
-	    }, 1200);
+		        meta: 'If the server stalls, browser review will continue automatically.',
+		      });
+		    }, 1200);
+		    this._startReviewPlayback({
+		      start: 0,
+		      end: Math.max(0, this.gameMoves.length - 1),
+		      minDelay: 160,
+		      maxDelay: 820,
+		    });
 	
 	    let response;
 	    try {
@@ -2931,9 +3045,10 @@ class ChessReviewApp {
     results.blackAcpl = data.blackAcpl;
     results.whiteCaps = data.whiteCaps;
     results.blackCaps = data.blackCaps;
-	    results.phaseSummary = data.phaseSummary;
-	    return results;
-	  }
+		    results.phaseSummary = data.phaseSummary;
+		    results.statsRecorded = true;
+		    return results;
+		  }
 
 	  async _fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount) {
 	    const controller = new AbortController();
@@ -2990,29 +3105,38 @@ class ChessReviewApp {
 	    };
 
 	    const evals = [];
-	    for (let i = 0; i < chunks.length; i += 1) {
-	      const chunk = chunks[i];
-	      const pct = 12 + Math.round((chunk.start / Math.max(1, total - 1)) * 76);
-	      this.elProgressFill.style.width = `${pct}%`;
-	      this.elReviewBtnText.textContent = `Server Reviewing ${i + 1}/${chunks.length}`;
-	      this._updateLiveEvalPanel({
-	        busy: true,
-	        score: null,
-	        line: `Server review chunk ${i + 1}/${chunks.length}`,
-	        meta: `Analyzing positions ${chunk.start + 1}-${chunk.start + chunk.positions.length} of ${total}.`,
-	      });
-
-	      const chunkEvals = await this._fetchServerEvalChunk(chunk.positions, serverProfile, i, chunks.length);
-	      evals.push(...chunkEvals);
-	    }
+		    for (let i = 0; i < chunks.length; i += 1) {
+		      const chunk = chunks[i];
+		      const pct = 12 + Math.round((chunk.start / Math.max(1, total - 1)) * 76);
+		      const startMove = clamp(chunk.start, 0, Math.max(0, this.gameMoves.length - 1));
+		      const endMove = clamp(chunk.start + chunk.positions.length - 2, startMove, Math.max(0, this.gameMoves.length - 1));
+		      this.elProgressFill.style.width = `${pct}%`;
+		      this.elReviewBtnText.textContent = `Server Reviewing ${i + 1}/${chunks.length}`;
+		      this._updateLiveEvalPanel({
+		        busy: true,
+		        score: null,
+		        line: `Server review chunk ${i + 1}/${chunks.length}`,
+		        meta: `Showing moves ${startMove + 1}-${endMove + 1} while the server analyzes positions ${chunk.start + 1}-${chunk.start + chunk.positions.length} of ${total}.`,
+		      });
+		      this._startReviewPlayback({
+		        start: startMove,
+		        end: endMove,
+		        minDelay: total > 90 ? 120 : 170,
+		        maxDelay: total > 90 ? 520 : 760,
+		      });
+	
+		      const chunkEvals = await this._fetchServerEvalChunk(chunk.positions, serverProfile, i, chunks.length);
+		      evals.push(...chunkEvals);
+		    }
 
 	    if (evals.length !== positions.length) {
 	      throw new Error('Server review returned an incomplete evaluation set.');
 	    }
 
-	    this.elProgressFill.style.width = '94%';
-	    this.elReviewBtnText.textContent = 'Classifying moves...';
-	    const opening = this.analyzer.detectOpening(this.gameMoves);
+		    this.elProgressFill.style.width = '94%';
+		    this.elReviewBtnText.textContent = 'Classifying moves...';
+		    this._stopReviewPlayback();
+		    const opening = this.analyzer.detectOpening(this.gameMoves);
 	    const results = this.analyzer.resultsFromEvals(
 	      this.gameMoves,
 	      positions,
