@@ -2861,6 +2861,54 @@ class ChessReviewApp {
 		    clearTimeout(this.reviewPlaybackTimer);
 		    this.reviewPlaybackTimer = null;
 		  }
+
+		  _sprintReviewPlaybackTo(targetIndex, options = {}) {
+		    this._stopReviewPlayback();
+		    if (!this.gameMoves.length || !this.isAnalyzing) return Promise.resolve();
+
+		    const target = clamp(targetIndex, 0, this.gameMoves.length - 1);
+		    const start = clamp(this.currentMoveIndex < 0 ? 0 : this.currentMoveIndex, 0, this.gameMoves.length - 1);
+		    if (start === target) {
+		      this._previewReviewPosition(target);
+		      return Promise.resolve();
+		    }
+
+		    const direction = target > start ? 1 : -1;
+		    const distance = Math.abs(target - start);
+		    const minDelay = options.minDelay ?? 28;
+		    const maxDelay = options.maxDelay ?? 150;
+		    let step = 0;
+		    let index = start;
+
+		    return new Promise((resolve) => {
+		      const tick = () => {
+		        if (!this.isAnalyzing) {
+		          this.reviewPlaybackTimer = null;
+		          resolve();
+		          return;
+		        }
+
+		        index += direction;
+		        step += 1;
+		        this._previewReviewPosition(index);
+
+		        if (index === target) {
+		          this.reviewPlaybackTimer = setTimeout(() => {
+		            this.reviewPlaybackTimer = null;
+		            resolve();
+		          }, maxDelay);
+		          return;
+		        }
+
+		        const progress = step / Math.max(1, distance);
+		        const easeToMiddle = Math.sin(Math.PI * progress);
+		        const delay = Math.round(maxDelay - ((maxDelay - minDelay) * easeToMiddle));
+		        this.reviewPlaybackTimer = setTimeout(tick, delay);
+		      };
+
+		      this.reviewPlaybackTimer = setTimeout(tick, minDelay);
+		    });
+		  }
 		
 		  async _startReview() {
     const serverReview = this.engineSettings.analysisLocation === 'netlify';
@@ -3122,31 +3170,38 @@ class ChessReviewApp {
 	      timeoutMs: total > 90 ? 320 : 550,
 	    };
 
-		    const evals = [];
-		    this._startReviewPlayback({
-		      start: 0,
-		      end: Math.max(0, this.gameMoves.length - 1),
-		      initialIndex: Math.max(0, this.currentMoveIndex),
-		      minDelay: total > 90 ? 75 : 105,
-		      maxDelay: total > 90 ? 360 : 460,
-		    });
-		    for (let i = 0; i < chunks.length; i += 1) {
-		      const chunk = chunks[i];
-		      const pct = 12 + Math.round((chunk.start / Math.max(1, total - 1)) * 76);
-		      const startMove = clamp(chunk.start, 0, Math.max(0, this.gameMoves.length - 1));
-		      const endMove = clamp(chunk.start + chunk.positions.length - 2, startMove, Math.max(0, this.gameMoves.length - 1));
+			    const evals = [];
+			    for (let i = 0; i < chunks.length; i += 1) {
+			      const chunk = chunks[i];
+			      const pct = 12 + Math.round((chunk.start / Math.max(1, total - 1)) * 76);
+			      const startMove = clamp(chunk.start, 0, Math.max(0, this.gameMoves.length - 1));
+			      const endMove = clamp(chunk.start + chunk.positions.length - 2, startMove, Math.max(0, this.gameMoves.length - 1));
 		      this.elProgressFill.style.width = `${pct}%`;
 		      this.elReviewBtnText.textContent = `Server Reviewing ${i + 1}/${chunks.length}`;
 		      this._updateLiveEvalPanel({
 		        busy: true,
 		        score: null,
-		        line: `Server review chunk ${i + 1}/${chunks.length}`,
-		        meta: `Showing moves ${startMove + 1}-${endMove + 1} while the server analyzes positions ${chunk.start + 1}-${chunk.start + chunk.positions.length} of ${total}.`,
-		      });
-	
-		      const chunkEvals = await this._fetchServerEvalChunk(chunk.positions, serverProfile, i, chunks.length);
-		      evals.push(...chunkEvals);
-		    }
+			        line: `Server review chunk ${i + 1}/${chunks.length}`,
+			        meta: `Showing moves ${startMove + 1}-${endMove + 1} while the server analyzes positions ${chunk.start + 1}-${chunk.start + chunk.positions.length} of ${total}.`,
+			      });
+			      this._startReviewPlayback({
+			        start: startMove,
+			        end: endMove,
+			        initialIndex: i === 0 ? Math.max(0, this.currentMoveIndex) : startMove,
+			        minDelay: total > 90 ? 95 : 135,
+			        maxDelay: total > 90 ? 420 : 620,
+			      });
+		
+			      const chunkEvals = await this._fetchServerEvalChunk(chunk.positions, serverProfile, i, chunks.length);
+			      evals.push(...chunkEvals);
+			      if (i + 1 < chunks.length) {
+			        const nextStart = clamp(chunks[i + 1].start, 0, Math.max(0, this.gameMoves.length - 1));
+			        await this._sprintReviewPlaybackTo(nextStart, {
+			          minDelay: total > 90 ? 18 : 24,
+			          maxDelay: total > 90 ? 88 : 130,
+			        });
+			      }
+			    }
 
 	    if (evals.length !== positions.length) {
 	      throw new Error('Server review returned an incomplete evaluation set.');
