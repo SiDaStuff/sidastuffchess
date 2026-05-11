@@ -218,26 +218,32 @@ class ChessReviewApp {
 	    return getReviewProfileConfig(this.engineSettings.strength);
 	  }
 
-	  _showPopup(options = {}) {
-		    const config = {
-		      icon: options.icon || 'info',
-		      title: options.title || '',
-		      text: options.text || options.message || '',
-		      confirmButtonColor: '#202721',
-		      confirmButtonText: options.confirmButtonText || 'OK',
-		      customClass: {
-		        popup: 'app-popup',
-		        confirmButton: 'app-popup-confirm',
-		      },
-		    };
+		  _showPopup(options = {}) {
+			    const config = {
+			      icon: options.icon || 'info',
+			      title: options.title || '',
+			      text: options.text || options.message || '',
+			      html: options.html,
+			      confirmButtonColor: '#202721',
+			      confirmButtonText: options.confirmButtonText || 'OK',
+			      showCancelButton: !!options.showCancelButton,
+			      cancelButtonText: options.cancelButtonText || 'Cancel',
+			      reverseButtons: options.reverseButtons ?? true,
+			      allowOutsideClick: options.allowOutsideClick ?? true,
+			      customClass: {
+			        popup: 'app-popup',
+			        confirmButton: 'app-popup-confirm',
+			        cancelButton: 'app-popup-cancel',
+			      },
+			    };
 
 	    if (window.Swal?.fire) {
 	      return window.Swal.fire(config);
 	    }
 
-	    window.alert([config.title, config.text].filter(Boolean).join('\n'));
-	    return Promise.resolve();
-	  }
+		    const confirmed = !config.showCancelButton || window.confirm([config.title, config.text || options.message || ''].filter(Boolean).join('\n'));
+		    return Promise.resolve({ isConfirmed: confirmed, isDismissed: !confirmed });
+		  }
 
   _setButtonLabel(button, label) {
     const target = button?.querySelector('.btn-label');
@@ -1337,22 +1343,46 @@ class ChessReviewApp {
 	
 		    const key = result?.classificationKey || '';
 		    const adjustNote = this._adjustCoachSkillFromResult(result);
-		    if (['BLUNDER', 'MISTAKE', 'MISS', 'INACCURACY'].includes(key)) {
-		      const reply = result.opponentBestMoveSan || result.opponentBestMove || 'the tactic';
-		      const queenNote = /queen/i.test(result.coachText || '') ? 'This leaves your queen vulnerable.' : 'This is the key moment.';
-		      this._setCoachDialog(`${queenNote} ${result.coachText || ''} The coach response is ${reply}. Use Take Back if you want another try.${adjustNote}`, key);
-	      if (result.opponentBestMove) this.board.setBestMoveArrow(result.opponentBestMove, { color: '#CA3431' });
-	      this.coachMode.lastAdviceMoveIndex = result.moveIndex;
-		    } else if (key === 'BRILLIANT') {
-		      this._setCoachDialog(`${move.san}!! Brilliant. Best move, hard to find, and tactically precise.${adjustNote}`, 'Brilliant');
+			    if (['BLUNDER', 'MISTAKE', 'MISS', 'INACCURACY'].includes(key)) {
+			      const reply = result.opponentBestMoveSan || result.opponentBestMove || 'the tactic';
+			      const queenNote = /queen/i.test(result.coachText || '') ? 'This leaves your queen vulnerable.' : 'This is the key moment.';
+			      this._setCoachDialog(`${queenNote} ${result.coachText || ''} The coach response is ${reply}. Use Take Back if you want another try.${adjustNote}`, key);
+		      if (result.opponentBestMove) this.board.setBestMoveArrow(result.opponentBestMove, { color: '#CA3431' });
+		      this.coachMode.lastAdviceMoveIndex = result.moveIndex;
+			      if (['BLUNDER', 'MISTAKE'].includes(key)) {
+			        const choice = await this._showCoachTakebackPrompt(result, reply);
+			        if (!this.coachMode.active) return;
+			        if (!choice) {
+			          this._coachTakeback();
+			          return;
+			        }
+			      }
+			    } else if (key === 'BRILLIANT') {
+			      this._setCoachDialog(`${move.san}!! Brilliant. Best move, hard to find, and tactically precise.${adjustNote}`, 'Brilliant');
 	    } else if (key) {
 	      this._setCoachDialog(`${result.classification.name}: ${move.san}. Keep going.${adjustNote}`, 'Coaching');
 	    }
 	
-	    if (!this._checkCoachGameOver()) {
-	      setTimeout(() => this._makeCoachMove(), 700);
-	    }
-	  }
+		    if (!this._checkCoachGameOver()) {
+		      setTimeout(() => this._makeCoachMove(), 700);
+		    }
+		  }
+
+		  async _showCoachTakebackPrompt(result, reply) {
+		    const key = result?.classificationKey || 'MISTAKE';
+		    const title = key === 'BLUNDER' ? 'Blunder on the board' : 'Mistake on the board';
+		    const explanation = result?.coachText || `${result?.moveSan || 'That move'} gives the coach a clear reply.`;
+		    const response = await this._showPopup({
+		      icon: key === 'BLUNDER' ? 'error' : 'warning',
+		      title,
+		      text: `${explanation} The coach can answer with ${reply}.`,
+		      confirmButtonText: 'Continue',
+		      cancelButtonText: 'Take Back',
+		      showCancelButton: true,
+		      allowOutsideClick: false,
+		    });
+		    return !!response?.isConfirmed;
+		  }
 
   _checkCoachGameOver() {
     if (!this.coachMode.active || !this.chess.game_over()) return false;
@@ -2502,60 +2532,33 @@ class ChessReviewApp {
       }
     }
 
-    this.elMoveBadge.style.display = 'flex';
-    this.elMoveBadge.style.background = classification.color;
-    this.elMoveBadge.style.color = '#fff';
+	    this.elMoveBadge.style.display = 'flex';
+	    const badgeRgb = this._hexToRgb(classification.color);
+	    this.elMoveBadge.style.setProperty('--badge-color', classification.color);
+	    if (badgeRgb) {
+	      this.elMoveBadge.style.setProperty('--badge-rgb', `${badgeRgb.r}, ${badgeRgb.g}, ${badgeRgb.b}`);
+	    }
+	    this.elMoveBadge.style.background = classification.color;
+	    this.elMoveBadge.style.color = '#fff';
     this.elMoveBadge.title = classification.name;
     this.elMoveBadge.setAttribute('aria-label', classification.name);
     this.elBadgeIcon.className = this._classificationIconClass(classification, 'badge-icon');
     this.elBadgeIcon.textContent = classification.icon;
     this.elBadgeText.textContent = '';
 
-    this.elMoveBadge.style.animation = 'none';
-    void this.elMoveBadge.offsetHeight;
-    this.elMoveBadge.style.animation = '';
+	    const key = this.analyzer.getClassificationKey(classification);
+	    const hasImpactBadge = ['BRILLIANT', 'GREAT', 'BLUNDER'].includes(key);
+	    this.elMoveBadge.classList.toggle('badge-impact', hasImpactBadge);
+	    this.elMoveBadge.style.animation = 'none';
+	    void this.elMoveBadge.offsetHeight;
+	    this.elMoveBadge.style.animation = '';
+	
+		    if (!options.suppressFlash) {
+		      this._flashBoard(classification);
+		    }
+		  }
 
-	    if (!options.suppressFlash) {
-	      this._flashBoard(classification);
-	      this._showPieceCelebration(classification, targetSquare);
-	    }
-	  }
-
-	  _showPieceCelebration(classification, targetSquare) {
-	    if (!targetSquare) return;
-	    if (classification !== MoveClassification.BRILLIANT && classification !== MoveClassification.GREAT) return;
-
-	    const sqEl = this.board.container.querySelector(`[data-square="${targetSquare}"]`);
-	    if (!sqEl) return;
-
-	    const existing = this.board.container.parentElement.querySelector('.piece-celebration');
-	    if (existing) existing.remove();
-
-	    const boardRect = this.board.container.parentElement.getBoundingClientRect();
-	    const sqRect = sqEl.getBoundingClientRect();
-	    const centerX = sqRect.left - boardRect.left + (sqRect.width / 2);
-	    const centerY = sqRect.top - boardRect.top + (sqRect.height / 2);
-	    const kind = classification === MoveClassification.BRILLIANT ? 'brilliant' : 'great';
-
-	    const effect = document.createElement('div');
-	    effect.className = `piece-celebration piece-celebration-${kind}`;
-	    effect.style.left = `${centerX}px`;
-	    effect.style.top = `${centerY}px`;
-
-	    for (let i = 0; i < 10; i += 1) {
-	      const particle = document.createElement('span');
-	      particle.className = 'piece-celebration-particle';
-	      particle.style.setProperty('--angle', `${i * 36}deg`);
-	      particle.style.setProperty('--distance', `${26 + (i % 3) * 8}px`);
-	      particle.style.setProperty('--delay', `${i * 26}ms`);
-	      effect.appendChild(particle);
-	    }
-
-	    this.board.container.parentElement.appendChild(effect);
-	    effect.addEventListener('animationend', () => effect.remove(), { once: true });
-	  }
-
-  _refreshMoveBadgePosition() {
+	  _refreshMoveBadgePosition() {
 	    const result = this.analysisResults?.[this.currentMoveIndex] || this.liveMoveResults?.[this.currentMoveIndex];
 	    if (!result || result.isCoachMove || this.currentMoveIndex < 0) return;
     this._showMoveBadge(result.classification, result.moveUci ? result.moveUci.substring(2, 4) : null, { suppressFlash: true });
@@ -2586,13 +2589,7 @@ class ChessReviewApp {
     if (existing) existing.remove();
 
     let flashClass = null;
-    if (classification === MoveClassification.BLUNDER || classification === MoveClassification.MISS) {
-      flashClass = 'flash-blunder';
-    } else if (classification === MoveClassification.BRILLIANT) {
-      flashClass = 'flash-brilliant';
-    } else if (classification === MoveClassification.GREAT) {
-      flashClass = 'flash-great';
-    }
+	    if (classification === MoveClassification.MISS) flashClass = 'flash-blunder';
     if (!flashClass) return;
 
     const flash = document.createElement('div');

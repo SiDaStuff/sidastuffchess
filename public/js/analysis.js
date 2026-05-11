@@ -155,8 +155,8 @@ class BrowserMoveCoach {
 	      ? `changes the expected result by about ${epLoss} percentage points`
 	      : `gives up about ${Math.round(payload.cpLoss || 0)} centipawns`;
 	    const descriptions = {
-	      BRILLIANT: 'is brilliant because it solves a concrete tactical problem while keeping the position alive',
-	      GREAT: 'is a great move and one of the few ways to keep full pressure',
+	      BRILLIANT: 'is brilliant because it is a concrete forcing tactic, not just a good trade',
+	      GREAT: 'is a great move because it is hard to replace and keeps the position healthy',
 	      BEST: 'is the best move in the position',
 	      EXCELLENT: 'is excellent and stays very close to the engine line',
 	      GOOD: 'is playable, though there was a cleaner option',
@@ -601,7 +601,7 @@ class MoveAnalyzer {
     return '';
   }
 
-		  classifyMove(moveData) {
+			  classifyMove(moveData) {
 	    const {
 	      movePly,
 	      moveSan,
@@ -633,25 +633,28 @@ class MoveAnalyzer {
 			    const nearlyBest = isBestMove || cpLoss <= 18 || expectedLoss <= 0.012;
 		    const positionAfterOk = playerEdgeAfter > -120 && this.expectedPoints(playerEdgeAfter, playerRating) >= 0.38;
 		    const wasAlreadyCrushing = this.expectedPoints(playerEdgeBefore, playerRating) >= 0.9 && !opponentJustBlundered;
-		    const materialOffer = this._materialOfferAfterMove(fenBefore, moveSan);
-		    const kingPressureOffer = !!materialOffer && this._kingPressureMove(fenBefore, moveSan);
-		    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan) || kingPressureOffer;
+			    const materialOffer = this._materialOfferAfterMove(fenBefore, moveSan);
+			    const kingPressureOffer = !!materialOffer && this._kingPressureMove(fenBefore, moveSan);
+			    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan) || kingPressureOffer;
+			    const ordinaryCaptureTrade = this._ordinaryCaptureTrade(fenBefore, moveSan);
 		
 		    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
-		    const bestAttackingOffer = goodPieceSacrifice
-		      && nearlyBest
-		      && !opponentMateAfter
+			    const bestAttackingOffer = goodPieceSacrifice
+			      && nearlyBest
+			      && !ordinaryCaptureTrade
+			      && !opponentMateAfter
 		      && positionAfterOk
 		      && !wasAlreadyCrushing
 		      && playerEdgeAfter >= playerEdgeBefore - 85
 		      && (isBestMove || gapToSecond >= 20 || beforeExpected <= 0.72);
-				    if (!opponentMateAfter && mateTrap && nearlyBest && positionAfterOk && !wasAlreadyCrushing) {
-				      return MoveClassification.BRILLIANT;
-				    }
-
-			    if (!opponentMateAfter
-			      && kingPressureOffer
-			      && nearlyBest
+					    if (!ordinaryCaptureTrade && !opponentMateAfter && mateTrap && nearlyBest && positionAfterOk && !wasAlreadyCrushing) {
+					      return MoveClassification.BRILLIANT;
+					    }
+	
+				    if (!opponentMateAfter
+				      && !ordinaryCaptureTrade
+				      && kingPressureOffer
+				      && nearlyBest
 			      && positionAfterOk
 			      && playerEdgeAfter >= playerEdgeBefore - 70
 			      && !wasAlreadyCrushing) {
@@ -660,8 +663,9 @@ class MoveAnalyzer {
 
 	    const rareBestSacrifice = goodPieceSacrifice
 	      && nearlyBest
-	      && gapToSecond >= 70
-	      && playerEdgeAfter >= playerEdgeBefore - 20
+		      && gapToSecond >= 70
+		      && !ordinaryCaptureTrade
+		      && playerEdgeAfter >= playerEdgeBefore - 20
 	      && positionAfterOk
 	      && !wasAlreadyCrushing
 	      && !opponentMateAfter;
@@ -722,8 +726,9 @@ class MoveAnalyzer {
 	    const stillClose = Math.abs(scoreAfter) < 220;
     const uniqueBest = gapToSecond >= 120;
 
-		    if (goodPieceSacrifice
-		      && nearlyBest
+			    if (!ordinaryCaptureTrade
+			      && goodPieceSacrifice
+			      && nearlyBest
 		      && !opponentMateAfter
 	      && positionAfterOk
 	      && !wasAlreadyCrushing
@@ -759,7 +764,7 @@ class MoveAnalyzer {
 		    return cpLoss;
 		  }
 
-		  _materialOfferAfterMove(fenBefore, moveSan) {
+			  _materialOfferAfterMove(fenBefore, moveSan) {
 		    if (!fenBefore || !moveSan) return null;
 		    const board = new Chess(fenBefore);
 		    const moveObj = board.move(moveSan, { sloppy: true });
@@ -779,7 +784,24 @@ class MoveAnalyzer {
 		      .filter((reply) => reply.swing >= 1)
 		      .sort((a, b) => b.swing - a.swing);
 
-		    return captures[0] || null;
+			    return captures[0] || null;
+			  }
+
+		  _ordinaryCaptureTrade(fenBefore, moveSan) {
+		    if (!fenBefore || !moveSan) return false;
+		    const board = new Chess(fenBefore);
+		    const moveObj = board.move(moveSan, { sloppy: true });
+		    if (!moveObj || !moveObj.captured) return false;
+		    if (/[+#]/.test(moveObj.san || '')) return false;
+
+		    const value = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+		    const movedValue = value[moveObj.piece] || 0;
+		    const capturedValue = value[moveObj.captured] || 0;
+		    if (capturedValue < movedValue) return false;
+
+		    const replyCaptures = board.moves({ verbose: true })
+		      .filter((reply) => reply.to === moveObj.to && reply.captured === moveObj.piece);
+		    return replyCaptures.length > 0 || capturedValue === movedValue;
 		  }
 
 		  _kingPressureMove(fenBefore, moveSan) {
