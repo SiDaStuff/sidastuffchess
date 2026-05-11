@@ -1,4 +1,4 @@
-const { getPublicStats, incrementPublicStats, claimUniqueBrilliantMoves } = require('./_lib/firebase-stats');
+const { getPublicStats } = require('./_lib/firebase-stats');
 
 const json = (statusCode, body) => ({
   statusCode,
@@ -16,30 +16,7 @@ exports.handler = async (event) => {
       return json(200, { stats });
     }
 
-    if (event.httpMethod === 'POST') {
-      let payload = {};
-      try {
-        payload = JSON.parse(event.body || '{}');
-      } catch (_err) {
-        return json(400, { error: 'Invalid JSON body.' });
-      }
-
-      const eventName = String(payload.event || '');
-      const delta = {};
-      if (eventName === 'coach_game_started') {
-        delta.coachGamesPlayed = 1;
-      } else if (eventName === 'game_reviewed') {
-        delta.movesAnalyzed = Math.max(0, Math.min(240, Number(payload.movesAnalyzed) || 0));
-        delta.brilliantMoves = await claimUniqueBrilliantMoves(payload.brilliantMoveKeys || []);
-      } else {
-        return json(400, { error: 'Unknown stats event.' });
-      }
-
-      const stats = await incrementPublicStats(delta);
-      return json(200, { stats });
-    }
-
-    return json(405, { error: 'Use GET or POST.' });
+    return json(405, { error: 'Use GET.' });
   } catch (err) {
     console.error('Public stats failed:', err);
     return json(500, { error: 'Stats are unavailable.' });

@@ -286,29 +286,7 @@ class ChessReviewApp {
 		    }
 		  }
 
-	  async _recordPublicStatEvent(event, extra = {}) {
-	    try {
-	      const response = await fetch('/.netlify/functions/public-stats', {
-	        method: 'POST',
-	        headers: { 'Content-Type': 'application/json' },
-	        body: JSON.stringify({ event, ...extra }),
-	      });
-	      if (!response.ok) return;
-	      const data = await response.json();
-	      this._renderPublicStats(data.stats || {});
-	    } catch (_err) {
-	      // Stats are public polish, never block chess.
-	    }
-	  }
-
-		  _brilliantMoveKeys(results = this.analysisResults) {
-		    if (!Array.isArray(results)) return [];
-		    return results
-		      .filter((entry) => entry?.classificationKey === 'BRILLIANT' && entry.fen && entry.moveUci)
-		      .map((entry) => `${String(entry.fen).split(/\s+/).slice(0, 4).join(' ')}|${entry.moveUci}`);
-		  }
-	
-		  _bindEvents() {
+			  _bindEvents() {
     this.elBtnMenuImport?.addEventListener('click', () => this._showEngineChoiceModal('import'));
     this.elBtnMenuCoach?.addEventListener('click', () => this._showEngineChoiceModal('coach'));
     this.elBtnBackMenu?.addEventListener('click', () => this._showMainMenu());
@@ -1085,9 +1063,7 @@ class ChessReviewApp {
 	      hintFen: '',
 	      hintMove: '',
 		    };
-		    this._recordPublicStatEvent('coach_game_started');
-
-		    this._loadGame([], {
+			    this._loadGame([], {
 	      Event: 'Coach',
 	      White: humanColor === 'w' ? 'You' : 'Coach',
 	      Black: humanColor === 'b' ? 'You' : 'Coach',
@@ -2944,49 +2920,24 @@ class ChessReviewApp {
 	      });
 	    };
 	
-	    try {
-      if (this.engineSettings.analysisLocation === 'netlify') {
-        try {
-          this.analysisResults = await this._analyzeGameOnServer();
-		        } catch (serverErr) {
-		          console.warn('Server analysis failed, falling back to browser:', serverErr);
-		          this._stopReviewPlayback();
-		          this.elReviewBtnText.textContent = 'Server unavailable. Using browser...';
-	          this.elProgressFill.style.width = '0%';
-	          this._updateLiveEvalPanel({
-	            busy: true,
-	            score: null,
-	            line: 'Server review failed. Continuing in browser.',
-	            meta: serverErr.message || 'Browser review is starting now.',
-	          });
-	          if (!this.engine?.ready) {
-	            throw new Error('Server review failed and the browser engine is not ready yet. Try again once Stockfish finishes loading.');
-	          }
-	          this.analysisResults = await this.analyzer.analyzeGame(
-	            this.gameMoves,
-	            this.engine,
-	            updateReviewProgress,
-		          { initialFen: this.initialFen, headers: this.gameHeaders }
-		        );
-        }
-	      } else {
-		        this.analysisResults = await this.analyzer.analyzeGame(
-		          this.gameMoves,
+		    try {
+		      if (serverReview) {
+		        try {
+		          this.analysisResults = await this._analyzeGameOnServer();
+			        } catch (serverErr) {
+			          console.warn('Server analysis failed:', serverErr);
+			          throw serverErr;
+	        }
+			      } else {
+			        this.analysisResults = await this.analyzer.analyzeGame(
+			          this.gameMoves,
 		          this.engine,
 		          updateReviewProgress,
 			          { initialFen: this.initialFen, headers: this.gameHeaders }
 			        );
 	      }
 
-	      if (!this.analysisResults.statsRecorded) {
-	        this._recordPublicStatEvent('game_reviewed', {
-	          movesAnalyzed: this.analysisResults.length || this.gameMoves.length,
-	          brilliantMoveKeys: this._brilliantMoveKeys(this.analysisResults),
-	        });
-	        this.analysisResults.statsRecorded = true;
-	      }
-	
-	      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
+		      this._showOpeningInfo(this.analysisResults.opening || this.analyzer.detectOpening(this.gameMoves));
 	      this._showReviewSummary();
 	      this._renderMoveList();
 	      this._renderCriticalMoments();
@@ -3010,12 +2961,12 @@ class ChessReviewApp {
 	    }
   }
 
-	  async _analyzeGameOnServer() {
-		    const reviewProfile = this._getReviewProfile();
-		    const positions = this.analyzer._positionsForMoves(this.gameMoves, this.initialFen);
-			    if (positions.length > 4) {
-		      return this._analyzeGameOnServerChunks(positions, reviewProfile);
-		    }
+		  async _analyzeGameOnServer() {
+			    const reviewProfile = this._getReviewProfile();
+			    const positions = this.analyzer._positionsForMoves(this.gameMoves, this.initialFen);
+				    if (positions.length > 4) {
+			      return this._analyzeGameOnServerChunks(positions, reviewProfile);
+			    }
 		    this.elReviewBtnText.textContent = 'Sending to Server...';
 	    this.elProgressFill.style.width = '12%';
 	    const controller = new AbortController();
@@ -3025,12 +2976,12 @@ class ChessReviewApp {
 		      progress = Math.min(progress + 3, 68);
 		      this.elProgressFill.style.width = `${progress}%`;
 		      this.elReviewBtnText.textContent = 'Server Reviewing...';
-	      this._updateLiveEvalPanel({
-	        busy: true,
-	        score: null,
-	        line: 'Server review is running.',
-		        meta: 'If the server stalls, browser review will continue automatically.',
-		      });
+		      this._updateLiveEvalPanel({
+		        busy: true,
+		        score: null,
+		        line: 'Server review is running.',
+			        meta: 'Keeping the review on the server.',
+			      });
 		    }, 1200);
 		    this._startReviewPlayback({
 		      start: 0,
@@ -3039,66 +2990,67 @@ class ChessReviewApp {
 		      maxDelay: 820,
 		    });
 	
-	    let response;
-	    try {
-	      response = await fetch('/.netlify/functions/analyze', {
-	        method: 'POST',
-	        headers: { 'Content-Type': 'application/json' },
-	        signal: controller.signal,
-	        body: JSON.stringify({
-	          moves: this.gameMoves,
-	          headers: this.gameHeaders || {},
-	          initialFen: this.initialFen,
-		          profile: {
-		            key: reviewProfile.key,
-			            depth: 14,
-		            multiPv: Math.min(reviewProfile.multiPv, 3),
-		            timeoutMs: 7000,
-		          },
-		        }),
-		      });
-	    } catch (err) {
-	      clearInterval(progressTimer);
-	      if (err.name === 'AbortError') {
-	        throw new Error('Server review timed out.');
-	      }
-	      throw err;
-	    } finally {
-	      clearTimeout(timeout);
-	    }
+		    let data = null;
+		    try {
+		      for (let attempt = 0; attempt < 4; attempt += 1) {
+		        let response;
+		        try {
+		          response = await fetch('/.netlify/functions/analyze', {
+		            method: 'POST',
+		            headers: { 'Content-Type': 'application/json' },
+		            signal: controller.signal,
+		            cache: 'no-store',
+		            body: JSON.stringify({
+		              moves: this.gameMoves,
+		              headers: this.gameHeaders || {},
+		              initialFen: this.initialFen,
+			              profile: {
+			                key: reviewProfile.key,
+				              depth: 14,
+			                multiPv: Math.min(reviewProfile.multiPv, 2),
+			                timeoutMs: 5000,
+			              },
+			            }),
+			          });
+		        } catch (err) {
+		          if (err.name === 'AbortError') {
+		            throw new Error('Server review timed out.');
+		          }
+		          throw err;
+		        }
 
-	    if (!response.ok) {
-	      clearInterval(progressTimer);
-	      const text = await response.text().catch(() => '');
-	      let message = text;
-	      try {
-	        message = JSON.parse(text).error || text;
-	      } catch (_err) {
-	        message = text;
-	      }
-	      throw new Error(message || `Server analysis failed with ${response.status}`);
-	    }
+		        const text = await response.text().catch(() => '');
+		        try {
+		          data = text ? JSON.parse(text) : null;
+		        } catch (_err) {
+		          data = null;
+		        }
 
-	    this.elProgressFill.style.width = '78%';
-	    let parseTimeout = null;
-	    let data;
-	    try {
-	      data = await Promise.race([
-	        response.json(),
-	        new Promise((_, reject) => {
-	          parseTimeout = setTimeout(() => {
-	            controller.abort();
-	            reject(new Error('Server response timed out.'));
-	          }, 10000);
-	        }),
-	      ]);
-	    } finally {
-	      clearInterval(progressTimer);
-	      if (parseTimeout) clearTimeout(parseTimeout);
-	    }
-	    if (!Array.isArray(data.results)) {
-	      throw new Error(data.error || 'Server analysis returned no results.');
-	    }
+		        if (response.ok && Array.isArray(data?.results)) break;
+
+		        const retryable = response.status >= 500 || response.status === 429 || data?.retryable;
+		        const message = data?.error || text || `Server analysis failed with ${response.status}`;
+		        if (!retryable || attempt === 3) throw new Error(message);
+
+		        const waitMs = 500 + (attempt * attempt * 450);
+		        this.elReviewBtnText.textContent = `Server retry ${attempt + 1}/3`;
+		        this._updateLiveEvalPanel({
+		          busy: true,
+		          score: null,
+		          line: 'Server review is retrying.',
+		          meta: message,
+		        });
+		        await new Promise((resolve) => setTimeout(resolve, waitMs));
+		      }
+		    } finally {
+		      clearInterval(progressTimer);
+		      clearTimeout(timeout);
+		    }
+
+		    this.elProgressFill.style.width = '78%';
+			    if (!Array.isArray(data?.results)) {
+			      throw new Error(data?.error || 'Server analysis returned no results.');
+			    }
 
     this.elProgressFill.style.width = '100%';
     const results = data.results.map((entry) => ({
@@ -3126,10 +3078,11 @@ class ChessReviewApp {
 			    return results;
 			  }
 
-			  _isServerChunkResourceError(err) {
-			    const message = String(err?.message || err || '');
-			    return /413|502|capped|outofmemory|out of memory|runtime\.outofmemory|signal:\s*killed|server review chunk/i.test(message);
-			  }
+				  _isServerChunkResourceError(err) {
+				    const message = String(err?.message || err || '');
+				    return !!err?.retryable
+				      || /413|429|500|502|503|504|busy|warming|retry|capped|timeout|timed out|outofmemory|out of memory|runtime\.outofmemory|signal:\s*killed|server review chunk/i.test(message);
+				  }
 
 		  async _fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex = 0) {
 		    const controller = new AbortController();
@@ -3156,30 +3109,45 @@ class ChessReviewApp {
 
 	    const text = await response.text().catch(() => '');
 	    let data = null;
-	    try {
-	      data = text ? JSON.parse(text) : null;
-	    } catch (_err) {
-	      data = null;
-	    }
-		    if (!response.ok) {
-		      const error = new Error(data?.error || text || `Server review chunk ${chunkIndex + 1}/${chunkCount} failed with ${response.status}.`);
-		      error.status = response.status;
-		      throw error;
+		    try {
+		      data = text ? JSON.parse(text) : null;
+		    } catch (_err) {
+		      data = null;
 		    }
+			    if (data?.retryable || data?.error) {
+			      const error = new Error(data.error || `Server review chunk ${chunkIndex + 1}/${chunkCount} needs a retry.`);
+				      error.status = response.status;
+				      error.retryable = Boolean(data.retryable);
+				      throw error;
+				    }
+				    if (!response.ok) {
+				      const error = new Error(data?.error || text || `Server review chunk ${chunkIndex + 1}/${chunkCount} failed with ${response.status}.`);
+			      error.status = response.status;
+			      error.retryable = response.status >= 500 || response.status === 429;
+			      throw error;
+			    }
 		    if (!Array.isArray(data?.evals)) {
 		      throw new Error(`Server review chunk ${chunkIndex + 1}/${chunkCount} returned no evals.`);
 		    }
 		    return data.evals;
 		  }
 
-			  async _fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex = 0, retryCount = 0) {
-			    try {
-			      return await this._fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex);
-			    } catch (err) {
-			      if (positions.length <= 1 && this._isServerChunkResourceError(err) && retryCount < 1) {
-			        await new Promise((resolve) => setTimeout(resolve, 500));
-			        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1);
-			      }
+				  async _fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex = 0, retryCount = 0) {
+				    try {
+				      return await this._fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex);
+				    } catch (err) {
+				      if (positions.length <= 1 && this._isServerChunkResourceError(err) && retryCount < 4) {
+				        const waitMs = 450 + (retryCount * retryCount * 350);
+				        this.elReviewBtnText.textContent = `Server retry ${retryCount + 1}/4`;
+				        this._updateLiveEvalPanel({
+				          busy: true,
+				          score: null,
+				          line: `Server review is retrying chunk ${chunkIndex + 1}/${chunkCount}.`,
+				          meta: err.message || `Waiting ${waitMs}ms before retrying.`,
+				        });
+				        await new Promise((resolve) => setTimeout(resolve, waitMs));
+				        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1);
+				      }
 				    if (positions.length <= 1 || !this._isServerChunkResourceError(err)) throw err;
 			      const midpoint = Math.ceil(positions.length / 2);
 		      this._updateLiveEvalPanel({
@@ -3188,12 +3156,12 @@ class ChessReviewApp {
 		        line: `Server review chunk ${chunkIndex + 1}/${chunkCount} was too large. Splitting it...`,
 		        meta: `Retrying positions ${baseIndex + 1}-${baseIndex + positions.length} in smaller pieces.`,
 		      });
-			      const lighterProfile = {
-			        ...profile,
-			        depth: 14,
-			        multiPv: 1,
-				        timeoutMs: 7000,
-			      };
+				      const lighterProfile = {
+				        ...profile,
+				        depth: 14,
+				        multiPv: 1,
+					        timeoutMs: 5000,
+				      };
 		      const first = await this._fetchServerEvalChunkSafely(
 		        positions.slice(0, midpoint),
 		        lighterProfile,
@@ -3220,12 +3188,12 @@ class ChessReviewApp {
 	      chunks.push({ start: i, positions: positions.slice(i, i + chunkSize) });
 	    }
 
-				    const serverProfile = {
-				      key: reviewProfile.key,
-				      depth: 14,
-				      multiPv: 1,
-					      timeoutMs: 7000,
-				    };
+					    const serverProfile = {
+					      key: reviewProfile.key,
+					      depth: 14,
+					      multiPv: 2,
+						      timeoutMs: 5000,
+					    };
 
 			    const evals = [];
 			    for (let i = 0; i < chunks.length; i += 1) {

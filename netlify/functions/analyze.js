@@ -4,9 +4,54 @@ const { incrementPublicStats, claimUniqueBrilliantMoves } = require('./_lib/fire
 
 const SERVER_REVIEW_PROFILE = {
   depth: 14,
-  multiPv: 3,
-  timeoutMs: 7000,
+  multiPv: 2,
+  timeoutMs: 5000,
 };
+
+let cachedEngine = null;
+let cachedEngineInit = null;
+let engineBusy = false;
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+async function getServerEngine() {
+  if (cachedEngine?.ready) return cachedEngine;
+  if (!cachedEngineInit) {
+    cachedEngine = new ServerStockfishEngine();
+    cachedEngineInit = cachedEngine.init().catch((err) => {
+      try {
+        cachedEngine?.destroy();
+      } catch (_destroyErr) {
+        // Ignore teardown failures after a failed init.
+      }
+      cachedEngine = null;
+      cachedEngineInit = null;
+      throw err;
+    });
+  }
+  await cachedEngineInit;
+  return cachedEngine;
+}
+
+function withEngineQueue(work) {
+  if (engineBusy) {
+    throw new Error('Server engine is busy. Retrying shortly.');
+  }
+  engineBusy = true;
+  return Promise.resolve()
+    .then(work)
+    .finally(() => {
+      engineBusy = false;
+    });
+}
 
 function brilliantMoveKey(entry) {
   if (!entry || entry.classificationKey !== 'BRILLIANT' || !entry.fen || !entry.moveUci) return '';
@@ -16,11 +61,19 @@ function brilliantMoveKey(entry) {
 
 const json = (statusCode, body) => ({
   statusCode,
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  },
   body: JSON.stringify(body),
 });
 
-exports.handler = async (event) => {
+function retryable(message) {
+  return json(200, { error: message, retryable: true });
+}
+
+exports.handler = async (event, context = {}) => {
+  context.callbackWaitsForEmptyEventLoop = false;
   if (event.httpMethod !== 'POST') {
     return json(405, { error: 'Use POST.' });
   }
@@ -38,10 +91,13 @@ exports.handler = async (event) => {
 	    return json(400, { error: 'No moves were provided.' });
 	  }
 	  if (moves.length > 120) {
-	    return json(413, { error: 'Server review is capped at 120 plies. Use browser review for longer games.' });
+	    return retryable('Server review is capped at 120 plies.');
+	  }
+	  if (moves.length > 3) {
+	    return retryable('Server full-game review is capped at 3 plies. Use server eval chunks for longer games.');
 	  }
 	  if (positions.length > 1) {
-	    return json(413, { error: 'Server eval chunks are capped at 1 position.' });
+	    return retryable('Server eval chunks are capped at 1 position.');
 	  }
 	
 	  const Chess = loadChess();
@@ -51,7 +107,7 @@ exports.handler = async (event) => {
 		  analyzer.setReviewProfile({
 		    depth: SERVER_REVIEW_PROFILE.depth,
 		    multiPv: positions.length
-		      ? Math.max(1, Math.min(Number(profile.multiPv) || 1, 1))
+		      ? Math.max(1, Math.min(Number(profile.multiPv) || 1, 2))
 		      : SERVER_REVIEW_PROFILE.multiPv,
 		    timeoutMs: SERVER_REVIEW_PROFILE.timeoutMs,
 		  });
@@ -64,11 +120,14 @@ exports.handler = async (event) => {
     }
   }
 
-	  const engine = new ServerStockfishEngine();
 	  try {
-	    await engine.init();
+		    const engine = await withTimeout(
+		      getServerEngine(),
+		      8000,
+		      'Server engine is still warming up.'
+		    );
 	    if (positions.length > 0) {
-	      const evals = await analyzer.evaluatePositions(positions, engine, null);
+	      const evals = await withEngineQueue(() => analyzer.evaluatePositions(positions, engine, null));
 	      return json(200, {
 	        evals,
 	        depth: analyzer.analysisDepth,
@@ -80,7 +139,7 @@ exports.handler = async (event) => {
 	    if (moves.length > 50) {
 	      analyzer._mateThreat = () => null;
 	    }
-	    const results = await analyzer.analyzeGame(moves, engine, null, { initialFen, headers: payload.headers || {} });
+	    const results = await withEngineQueue(() => analyzer.analyzeGame(moves, engine, null, { initialFen, headers: payload.headers || {} }));
 	    const brilliantMoveKeys = results.map(brilliantMoveKey).filter(Boolean);
 	    let publicStats = null;
 	    try {
@@ -122,8 +181,15 @@ exports.handler = async (event) => {
     });
   } catch (err) {
     console.error('Server analysis failed:', err);
-    return json(500, { error: err.message || 'Server analysis failed.' });
-  } finally {
-    engine.destroy();
+    if (/cancelled|not ready|timed out waiting|out of memory|abort/i.test(String(err?.message || err))) {
+      try {
+        cachedEngine?.destroy();
+      } catch (_destroyErr) {
+        // Ignore teardown failures while recovering the cached engine.
+      }
+      cachedEngine = null;
+      cachedEngineInit = null;
+    }
+    return retryable(err.message || 'Server analysis failed.');
   }
 };
