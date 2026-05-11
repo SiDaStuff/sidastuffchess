@@ -19,23 +19,30 @@ exports.handler = async (event) => {
     return json(400, { error: 'Invalid JSON body.' });
   }
 
-  const moves = Array.isArray(payload.moves) ? payload.moves : [];
-  if (moves.length === 0) {
-    return json(400, { error: 'No moves were provided.' });
-  }
-  if (moves.length > 120) {
-    return json(413, { error: 'Server review is capped at 120 plies. Use browser review for longer games.' });
-  }
-
-  const Chess = loadChess();
-  const { MoveAnalyzer } = loadAnalyzer();
-  const analyzer = new MoveAnalyzer();
-  const profile = payload.profile || {};
-  analyzer.setReviewProfile({
-    depth: Math.max(6, Math.min(Number(profile.depth) || 14, 14)),
-    multiPv: Math.max(2, Math.min(Number(profile.multiPv) || 2, 3)),
-    timeoutMs: Math.max(5000, Math.min(Number(profile.timeoutMs) || 9000, 9000)),
-  });
+	  const moves = Array.isArray(payload.moves) ? payload.moves : [];
+	  const positions = Array.isArray(payload.positions) ? payload.positions : [];
+	  if (moves.length === 0 && positions.length === 0) {
+	    return json(400, { error: 'No moves were provided.' });
+	  }
+	  if (moves.length > 120) {
+	    return json(413, { error: 'Server review is capped at 120 plies. Use browser review for longer games.' });
+	  }
+	  if (positions.length > 32) {
+	    return json(413, { error: 'Server eval chunks are capped at 32 positions.' });
+	  }
+	
+	  const Chess = loadChess();
+		  const { MoveAnalyzer } = loadAnalyzer();
+		  const analyzer = new MoveAnalyzer();
+		  const profile = payload.profile || {};
+		  const workSize = positions.length || moves.length;
+		  const maxDepth = workSize > 80 ? 6 : workSize > 50 ? 8 : positions.length ? 8 : 14;
+		  const maxTimeout = workSize > 80 ? 450 : workSize > 50 ? 700 : positions.length ? 900 : 9000;
+		  analyzer.setReviewProfile({
+		    depth: Math.max(6, Math.min(Number(profile.depth) || maxDepth, maxDepth)),
+		    multiPv: Math.max(1, Math.min(Number(profile.multiPv) || 2, 3)),
+		    timeoutMs: Math.max(180, Math.min(Number(profile.timeoutMs) || maxTimeout, maxTimeout)),
+		  });
 
   const initialFen = payload.initialFen || payload.headers?.FEN || undefined;
   if (initialFen) {
@@ -45,10 +52,23 @@ exports.handler = async (event) => {
     }
   }
 
-  const engine = new ServerStockfishEngine();
-  try {
-    await engine.init();
-    const results = await analyzer.analyzeGame(moves, engine, null, { initialFen, headers: payload.headers || {} });
+	  const engine = new ServerStockfishEngine();
+	  try {
+	    await engine.init();
+	    if (positions.length > 0) {
+	      const evals = await analyzer.evaluatePositions(positions, engine, null);
+	      return json(200, {
+	        evals,
+	        depth: analyzer.analysisDepth,
+	        multiPv: analyzer.multiPvCount,
+	        source: 'netlify',
+	      });
+	    }
+
+	    if (moves.length > 50) {
+	      analyzer._mateThreat = () => null;
+	    }
+	    const results = await analyzer.analyzeGame(moves, engine, null, { initialFen, headers: payload.headers || {} });
     const plainResults = results.map((entry) => ({
       ...entry,
       classification: undefined,

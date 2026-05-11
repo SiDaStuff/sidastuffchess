@@ -219,12 +219,17 @@ class ChessReviewApp {
 	  }
 
 	  _showPopup(options = {}) {
-	    const config = {
-	      icon: options.icon || 'info',
-	      title: options.title || '',
-	      text: options.text || options.message || '',
-	      confirmButtonColor: '#202721',
-	    };
+		    const config = {
+		      icon: options.icon || 'info',
+		      title: options.title || '',
+		      text: options.text || options.message || '',
+		      confirmButtonColor: '#202721',
+		      confirmButtonText: options.confirmButtonText || 'OK',
+		      customClass: {
+		        popup: 'app-popup',
+		        confirmButton: 'app-popup-confirm',
+		      },
+		    };
 
 	    if (window.Swal?.fire) {
 	      return window.Swal.fire(config);
@@ -546,11 +551,15 @@ class ChessReviewApp {
 	    if (this.elEngineLoadingText) this.elEngineLoadingText.textContent = message || `${pct}%`;
 	  }
 
-	  _showEngineLoadingOverlay(message = 'Preparing Stockfish...') {
-	    if (!this.elEngineLoadingOverlay) return;
-	    this.elEngineLoadingOverlay.style.display = 'flex';
-	    if (this.elEngineLoadingText) this.elEngineLoadingText.textContent = message;
-	  }
+		  _showEngineLoadingOverlay(message = 'Preparing Stockfish...') {
+		    if (!this.elEngineLoadingOverlay) return;
+		    if (document.body.classList.contains('menu-active')) {
+		      if (this.elEngineLoadingText) this.elEngineLoadingText.textContent = message;
+		      return;
+		    }
+		    this.elEngineLoadingOverlay.style.display = 'flex';
+		    if (this.elEngineLoadingText) this.elEngineLoadingText.textContent = message;
+		  }
 
 	  _hideEngineLoadingOverlay() {
 	    if (this.elEngineLoadingOverlay) this.elEngineLoadingOverlay.style.display = 'none';
@@ -784,24 +793,10 @@ class ChessReviewApp {
     return `Recommended: ${recommended.label}. This computer reports ${cores} CPU threads, and ${isolated}. Selected: ${selected.label}.`;
   }
 
-  _showEngineChoiceModal(nextAction) {
-    if (!this.elEngineChoiceModal || !this.elEngineChoiceModule) {
-      this._continueAfterEngineChoice(nextAction);
-      return;
-    }
-
-	    this.pendingEngineAction = nextAction;
-	    const modules = getEngineModules(this.engineSettings.source);
-	    const recommended = this._recommendedEngineModule();
-	    const nextModule = modules.some((entry) => entry.key === recommended && !(entry.requiresIsolation && !window.crossOriginIsolated))
-	      ? recommended
-	      : this.engineSettings.module;
-
-	    this._renderEngineModuleRadios(this.elEngineChoiceModule, 'engine-choice-module', modules, nextModule, recommended);
-	    this.elEngineChoiceRecommendation.textContent = this._engineRecommendationText(nextModule);
-	    this.elEngineChoiceModal.style.display = 'flex';
-	    this.elEngineChoiceModule.querySelector('input:checked')?.focus();
-  }
+	  _showEngineChoiceModal(nextAction) {
+	    this.pendingEngineAction = null;
+	    this._continueAfterEngineChoice(nextAction);
+	  }
 
   _hideEngineChoiceModal() {
     if (this.elEngineChoiceModal) this.elEngineChoiceModal.style.display = 'none';
@@ -2835,11 +2830,15 @@ class ChessReviewApp {
   }
 
 	  async _analyzeGameOnServer() {
-	    const reviewProfile = this._getReviewProfile();
-	    this.elReviewBtnText.textContent = 'Sending to Server...';
+		    const reviewProfile = this._getReviewProfile();
+		    const positions = this.analyzer._positionsForMoves(this.gameMoves, this.initialFen);
+		    if (positions.length > 36) {
+		      return this._analyzeGameOnServerChunks(positions, reviewProfile);
+		    }
+		    this.elReviewBtnText.textContent = 'Sending to Server...';
 	    this.elProgressFill.style.width = '12%';
 	    const controller = new AbortController();
-	    const timeout = setTimeout(() => controller.abort(), 28000);
+		    const timeout = setTimeout(() => controller.abort(), 45000);
 	    let progress = 12;
 	    const progressTimer = setInterval(() => {
 	      progress = Math.min(progress + 3, 68);
@@ -2881,11 +2880,17 @@ class ChessReviewApp {
 	      clearTimeout(timeout);
 	    }
 
-    if (!response.ok) {
-      clearInterval(progressTimer);
-      const text = await response.text().catch(() => '');
-      throw new Error(text || `Server analysis failed with ${response.status}`);
-    }
+	    if (!response.ok) {
+	      clearInterval(progressTimer);
+	      const text = await response.text().catch(() => '');
+	      let message = text;
+	      try {
+	        message = JSON.parse(text).error || text;
+	      } catch (_err) {
+	        message = text;
+	      }
+	      throw new Error(message || `Server analysis failed with ${response.status}`);
+	    }
 
 	    this.elProgressFill.style.width = '78%';
 	    let parseTimeout = null;
@@ -2928,11 +2933,100 @@ class ChessReviewApp {
     results.blackAcpl = data.blackAcpl;
     results.whiteCaps = data.whiteCaps;
     results.blackCaps = data.blackCaps;
-    results.phaseSummary = data.phaseSummary;
-    return results;
-  }
+	    results.phaseSummary = data.phaseSummary;
+	    return results;
+	  }
 
-  _showOpeningInfo(opening) {
+	  async _fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount) {
+	    const controller = new AbortController();
+	    const timeout = setTimeout(() => controller.abort(), 14000);
+	    let response;
+	    try {
+	      response = await fetch('/.netlify/functions/analyze', {
+	        method: 'POST',
+	        headers: { 'Content-Type': 'application/json' },
+	        signal: controller.signal,
+	        body: JSON.stringify({
+	          positions,
+	          profile,
+	        }),
+	      });
+	    } catch (err) {
+	      if (err.name === 'AbortError') {
+	        throw new Error(`Server review chunk ${chunkIndex + 1}/${chunkCount} timed out.`);
+	      }
+	      throw err;
+	    } finally {
+	      clearTimeout(timeout);
+	    }
+
+	    const text = await response.text().catch(() => '');
+	    let data = null;
+	    try {
+	      data = text ? JSON.parse(text) : null;
+	    } catch (_err) {
+	      data = null;
+	    }
+	    if (!response.ok) {
+	      throw new Error(data?.error || text || `Server review chunk ${chunkIndex + 1}/${chunkCount} failed.`);
+	    }
+	    if (!Array.isArray(data?.evals)) {
+	      throw new Error(`Server review chunk ${chunkIndex + 1}/${chunkCount} returned no evals.`);
+	    }
+	    return data.evals;
+	  }
+
+	  async _analyzeGameOnServerChunks(positions, reviewProfile) {
+	    const total = positions.length;
+	    const chunkSize = total > 90 ? 24 : 28;
+	    const chunks = [];
+	    for (let i = 0; i < total; i += chunkSize) {
+	      chunks.push({ start: i, positions: positions.slice(i, i + chunkSize) });
+	    }
+
+	    const serverProfile = {
+	      key: reviewProfile.key,
+	      depth: total > 90 ? 6 : 8,
+	      multiPv: total > 90 ? 1 : 2,
+	      timeoutMs: total > 90 ? 320 : 550,
+	    };
+
+	    const evals = [];
+	    for (let i = 0; i < chunks.length; i += 1) {
+	      const chunk = chunks[i];
+	      const pct = 12 + Math.round((chunk.start / Math.max(1, total - 1)) * 76);
+	      this.elProgressFill.style.width = `${pct}%`;
+	      this.elReviewBtnText.textContent = `Server Reviewing ${i + 1}/${chunks.length}`;
+	      this._updateLiveEvalPanel({
+	        busy: true,
+	        score: null,
+	        line: `Server review chunk ${i + 1}/${chunks.length}`,
+	        meta: `Analyzing positions ${chunk.start + 1}-${chunk.start + chunk.positions.length} of ${total}.`,
+	      });
+
+	      const chunkEvals = await this._fetchServerEvalChunk(chunk.positions, serverProfile, i, chunks.length);
+	      evals.push(...chunkEvals);
+	    }
+
+	    if (evals.length !== positions.length) {
+	      throw new Error('Server review returned an incomplete evaluation set.');
+	    }
+
+	    this.elProgressFill.style.width = '94%';
+	    this.elReviewBtnText.textContent = 'Classifying moves...';
+	    const opening = this.analyzer.detectOpening(this.gameMoves);
+	    const results = this.analyzer.resultsFromEvals(
+	      this.gameMoves,
+	      positions,
+	      evals,
+	      opening,
+	      { initialFen: this.initialFen, headers: this.gameHeaders || {}, skipMateThreat: true }
+	    );
+	    this.elProgressFill.style.width = '100%';
+	    return results;
+	  }
+
+	  _showOpeningInfo(opening) {
     if (!opening) {
       this.elOpeningInfo.style.display = 'none';
       this.elOpeningName.textContent = '';

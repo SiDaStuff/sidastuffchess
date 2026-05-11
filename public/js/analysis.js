@@ -107,11 +107,18 @@ class BrowserMoveCoach {
       if (payload.bestMoveSan) {
         statements.push(`The cleaner plan was ${payload.bestMoveSan}${bestMoveIdea ? `: ${bestMoveIdea}.` : '.'}`);
       }
-	    } else if (mateTrap) {
-	      statements.push(`If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; declining it leaves the pressure.`);
-	    } else if (payload.bestMoveSan && payload.bestMoveSan !== moveInfo.san && key !== 'BOOK') {
-	      statements.push(`It stays close to the engine's preferred idea, ${payload.bestMoveSan}.`);
-	    }
+		    } else if (mateTrap) {
+		      statements.push(`If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; declining it leaves the pressure.`);
+		    } else if (key === 'BRILLIANT') {
+		      const offer = this.analyzer._materialOfferAfterMove(payload.fenBefore, payload.moveSan);
+		      if (offer) {
+		        const offered = this.pieceNames[offer.captured] || 'piece';
+		        const grab = offer.san ? `${offer.san}` : `a capture on ${offer.to}`;
+		        statements.push(`It invites ${grab}, but the ${offered} is bait for the attack.`);
+		      }
+		    } else if (payload.bestMoveSan && payload.bestMoveSan !== moveInfo.san && key !== 'BOOK') {
+		      statements.push(`It stays close to the engine's preferred idea, ${payload.bestMoveSan}.`);
+		    }
 
     return statements
       .filter(Boolean)
@@ -626,12 +633,30 @@ class MoveAnalyzer {
 			    const nearlyBest = isBestMove || cpLoss <= 18 || expectedLoss <= 0.012;
 		    const positionAfterOk = playerEdgeAfter > -120 && this.expectedPoints(playerEdgeAfter, playerRating) >= 0.38;
 		    const wasAlreadyCrushing = this.expectedPoints(playerEdgeBefore, playerRating) >= 0.9 && !opponentJustBlundered;
-		    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan);
+		    const materialOffer = this._materialOfferAfterMove(fenBefore, moveSan);
+		    const kingPressureOffer = !!materialOffer && this._kingPressureMove(fenBefore, moveSan);
+		    const goodPieceSacrifice = isPieceSacrifice || !!this._mateTrapSacrifice(fenBefore, moveSan) || kingPressureOffer;
 		
 		    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
-		    if (!opponentMateAfter && mateTrap && nearlyBest && positionAfterOk && !wasAlreadyCrushing) {
-		      return MoveClassification.BRILLIANT;
-		    }
+		    const bestAttackingOffer = goodPieceSacrifice
+		      && nearlyBest
+		      && !opponentMateAfter
+		      && positionAfterOk
+		      && !wasAlreadyCrushing
+		      && playerEdgeAfter >= playerEdgeBefore - 85
+		      && (isBestMove || gapToSecond >= 20 || beforeExpected <= 0.72);
+				    if (!opponentMateAfter && mateTrap && nearlyBest && positionAfterOk && !wasAlreadyCrushing) {
+				      return MoveClassification.BRILLIANT;
+				    }
+
+			    if (!opponentMateAfter
+			      && kingPressureOffer
+			      && nearlyBest
+			      && positionAfterOk
+			      && playerEdgeAfter >= playerEdgeBefore - 70
+			      && !wasAlreadyCrushing) {
+			      return MoveClassification.BRILLIANT;
+			    }
 
 	    const rareBestSacrifice = goodPieceSacrifice
 	      && nearlyBest
@@ -641,9 +666,13 @@ class MoveAnalyzer {
 	      && !wasAlreadyCrushing
 	      && !opponentMateAfter;
 
-    if (rareBestSacrifice) {
-      return MoveClassification.BRILLIANT;
-    }
+	    if (rareBestSacrifice) {
+	      return MoveClassification.BRILLIANT;
+	    }
+
+	    if (bestAttackingOffer) {
+	      return MoveClassification.BRILLIANT;
+	    }
 
     if (movePly <= this.bookPly && cpLoss <= 20 && !opponentJustBlundered) {
       return MoveClassification.BOOK;
@@ -689,8 +718,8 @@ class MoveAnalyzer {
 	    if (expectedLoss > 0.10 * tolerance || effectiveCpLoss >= 155 * tolerance) return MoveClassification.MISTAKE;
 	    if (expectedLoss > 0.05 * tolerance || effectiveCpLoss >= 70 * tolerance) return MoveClassification.INACCURACY;
 
-    const wasCloseGame = Math.abs(scoreBefore) < 120;
-    const stillClose = Math.abs(scoreAfter) < 140;
+	    const wasCloseGame = Math.abs(scoreBefore) < 180;
+	    const stillClose = Math.abs(scoreAfter) < 220;
     const uniqueBest = gapToSecond >= 120;
 
 		    if (goodPieceSacrifice
@@ -717,7 +746,7 @@ class MoveAnalyzer {
 	    return MoveClassification.GOOD;
 	  }
 
-	  _classificationCpLoss({ cpLoss, phase, playerEdgeBefore, playerEdgeAfter, isCheckmate }) {
+		  _classificationCpLoss({ cpLoss, phase, playerEdgeBefore, playerEdgeAfter, isCheckmate }) {
 	    if (phase !== 'Endgame' || isCheckmate) return cpLoss;
 
 	    const stayedWinning = playerEdgeBefore >= 300 && playerEdgeAfter >= 220;
@@ -727,10 +756,50 @@ class MoveAnalyzer {
 	    if (stayedWinning) return cpLoss * 0.42;
 	    if (stayedClearlyBetter) return cpLoss * 0.68;
 	    if (stayedLost) return cpLoss * 0.5;
-	    return cpLoss;
-	  }
+		    return cpLoss;
+		  }
 
-		  _mateTrapSacrifice(fenBefore, moveSan) {
+		  _materialOfferAfterMove(fenBefore, moveSan) {
+		    if (!fenBefore || !moveSan) return null;
+		    const board = new Chess(fenBefore);
+		    const moveObj = board.move(moveSan, { sloppy: true });
+		    if (!moveObj || board.in_checkmate()) return null;
+
+		    const value = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+		    const captures = board.moves({ verbose: true })
+		      .filter((reply) => reply.captured && (value[reply.captured] || 0) >= 3)
+		      .map((reply) => ({
+		        san: reply.san,
+		        to: reply.to,
+		        captured: reply.captured,
+		        attacker: reply.piece,
+		        swing: (value[reply.captured] || 0) - (value[reply.piece] || 0),
+		        movedPiece: reply.to === moveObj.to,
+		      }))
+		      .filter((reply) => reply.swing >= 1)
+		      .sort((a, b) => b.swing - a.swing);
+
+		    return captures[0] || null;
+		  }
+
+		  _kingPressureMove(fenBefore, moveSan) {
+		    if (!fenBefore || !moveSan) return false;
+		    const board = new Chess(fenBefore);
+		    const moveObj = board.move(moveSan, { sloppy: true });
+		    if (!moveObj) return false;
+		    if (/[+#]/.test(moveObj.san || '')) return true;
+
+		    const opponent = moveObj.color === 'w' ? 'b' : 'w';
+		    const kingSquare = this._kingSquare(board.fen(), opponent);
+		    if (kingSquare && this._squareDistance(moveObj.to, kingSquare) <= 2) return true;
+
+		    const file = moveObj.to[0];
+		    const rank = Number(moveObj.to[1]);
+		    const kingRank = opponent === 'b' ? 8 : 1;
+		    return moveObj.captured && ['f', 'g', 'h'].includes(file) && Math.abs(rank - kingRank) <= 2;
+		  }
+
+			  _mateTrapSacrifice(fenBefore, moveSan) {
 		    if (!fenBefore || !moveSan) return null;
 		    const board = new Chess(fenBefore);
 		    const moveObj = board.move(moveSan, { sloppy: true });
@@ -1077,12 +1146,16 @@ class MoveAnalyzer {
 	    const punishText = this._describeImmediatePunish(fenAfter);
 	    const mateTrap = this._mateTrapSacrifice(fenBefore, moveSan);
 	
-	    if (key === 'BRILLIANT') {
-	      if (mateTrap) {
-	        return `${moveSan} is brilliant. If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; otherwise the pressure stays.`;
-	      }
-	      return `${moveSan} is brilliant. You found the only real tactical idea and kept the attack alive.`;
-	    }
+		    if (key === 'BRILLIANT') {
+		      if (mateTrap) {
+		        return `${moveSan} is brilliant. If ${mateTrap.captureSan} takes the piece, ${mateTrap.mateSan} is checkmate; otherwise the pressure stays.`;
+		      }
+		      const offer = this._materialOfferAfterMove(fenBefore, moveSan);
+		      if (offer) {
+		        return `${moveSan} is brilliant. It offers the ${this._pieceName(offer.captured)} on ${offer.to}, but that material is bait while the attack keeps control.`;
+		      }
+		      return `${moveSan} is brilliant. You found the only real tactical idea and kept the attack alive.`;
+		    }
     if (key === 'GREAT') {
       return `${moveSan} is great. The other moves slip, and this one keeps the pressure on.`;
     }
@@ -1166,70 +1239,88 @@ class MoveAnalyzer {
     return ordered;
   }
 
-  async analyzeGame(moves, engine, onProgress, options = {}) {
-    const chess = new Chess();
-    if (options.initialFen) {
-      chess.load(options.initialFen);
-    }
-    const positions = [chess.fen()];
-    const opening = this.detectOpening(moves);
+	  _positionsForMoves(moves, initialFen) {
+	    const chess = new Chess();
+	    if (initialFen) {
+	      chess.load(initialFen);
+	    }
+	    const positions = [chess.fen()];
+	    for (const move of moves) {
+	      chess.move(move, { sloppy: true });
+	      positions.push(chess.fen());
+	    }
+	    return positions;
+	  }
 
-    for (const move of moves) {
-      chess.move(move, { sloppy: true });
-      positions.push(chess.fen());
-    }
+	  async evaluatePositions(positions, engine, onProgress, options = {}) {
+	    const evals = [];
+	    const total = options.totalPositions || positions.length;
+	    const offset = options.offset || 0;
+	    if (options.newGame !== false) {
+	      await engine.newGame();
+	    }
 
-    const evals = [];
-    await engine.newGame();
+	    for (let i = 0; i < positions.length; i++) {
+	      const absoluteIndex = offset + i;
+	      if (onProgress) {
+	        onProgress(absoluteIndex, total, `Analyzing ${absoluteIndex + 1}/${total}`);
+	      }
 
-    for (let i = 0; i < positions.length; i++) {
-      if (onProgress) {
-        onProgress(i, positions.length, `Analyzing ${i + 1}/${positions.length}`);
-      }
+	      const fen = positions[i];
+	      const isWhiteToMove = fen.split(' ')[1] === 'w';
+	      const multi = await engine.evaluateMultiPV(fen, this.analysisDepth, this.multiPvCount, this.fallbackTimeoutMs);
 
-      const fen = positions[i];
-      const isWhiteToMove = fen.split(' ')[1] === 'w';
-      const multi = await engine.evaluateMultiPV(fen, this.analysisDepth, this.multiPvCount, this.fallbackTimeoutMs);
+	      let lines = (multi.lines || []).map((line) => {
+	        const pvTokens = (line.pv || '').split(/\s+/).filter(Boolean);
+	        const move = pvTokens.length > 0 ? pvTokens[0] : '';
+	        const cp = this.normalizeScore(line.score || 0, line.scoreType || 'cp', isWhiteToMove);
+	        return {
+	          cp,
+	          move,
+	          pvUci: line.pv || '',
+	          pvSan: this._lineToSan(fen, line.pv || '', 8),
+	          depth: line.depth || 0,
+	        };
+	      }).filter((line) => !!line.move);
 
-      let lines = (multi.lines || []).map((line) => {
-        const pvTokens = (line.pv || '').split(/\s+/).filter(Boolean);
-        const move = pvTokens.length > 0 ? pvTokens[0] : '';
-        const cp = this.normalizeScore(line.score || 0, line.scoreType || 'cp', isWhiteToMove);
-        return {
-          cp,
-          move,
-          pvUci: line.pv || '',
-          pvSan: this._lineToSan(fen, line.pv || '', 8),
-          depth: line.depth || 0,
-        };
-      }).filter((line) => !!line.move);
+	      lines = this._orderLinesForSide(lines, isWhiteToMove);
 
-      lines = this._orderLinesForSide(lines, isWhiteToMove);
+	      if (lines.length === 0) {
+	        const fallback = await engine.evaluate(fen, this.analysisDepth, this.fallbackTimeoutMs);
+	        const cp = this.normalizeScore(fallback.score, fallback.scoreType, isWhiteToMove);
+	        lines.push({
+	          cp,
+	          move: fallback.bestMove || '',
+	          pvUci: fallback.pv || '',
+	          pvSan: this._lineToSan(fen, fallback.pv || '', 8),
+	          depth: fallback.depth || 0,
+	        });
+	      }
 
-      if (lines.length === 0) {
-        const fallback = await engine.evaluate(fen, this.analysisDepth, this.fallbackTimeoutMs);
-        const cp = this.normalizeScore(fallback.score, fallback.scoreType, isWhiteToMove);
-        lines.push({
-          cp,
-          move: fallback.bestMove || '',
-          pvUci: fallback.pv || '',
-          pvSan: this._lineToSan(fen, fallback.pv || '', 8),
-          depth: fallback.depth || 0,
-        });
-      }
+	      const best = lines[0];
+	      evals.push({
+	        cp: best ? best.cp : 0,
+	        bestMove: best ? best.move : '',
+	        pv: best ? best.pvUci : '',
+	        pvSan: best ? best.pvSan : '',
+	        depth: best ? best.depth : 0,
+	        lines,
+	      });
+	    }
 
-      const best = lines[0];
-      evals.push({
-        cp: best ? best.cp : 0,
-        bestMove: best ? best.move : '',
-        pv: best ? best.pvUci : '',
-        pvSan: best ? best.pvSan : '',
-        depth: best ? best.depth : 0,
-        lines,
-      });
-    }
+	    return evals;
+	  }
 
-    const results = [];
+	  async analyzeGame(moves, engine, onProgress, options = {}) {
+	    const positions = this._positionsForMoves(moves, options.initialFen);
+	    const opening = this.detectOpening(moves);
+	    const evals = await this.evaluatePositions(positions, engine, onProgress);
+
+	    return this.resultsFromEvals(moves, positions, evals, opening, options);
+	  }
+	
+	  resultsFromEvals(moves, positions, evals, opening = this.detectOpening(moves), options = {}) {
+	    const results = [];
 
     for (let i = 0; i < moves.length; i++) {
       const fen = positions[i];
@@ -1278,7 +1369,7 @@ class MoveAnalyzer {
 	      const expectedLoss = this.expectedPointLoss(playerEdgeBefore, playerEdgeAfter, playerRating);
 	      const isBestMove = movePlayedUci === bestMove;
 	      const opponentJustBlundered = i > 0 && ['BLUNDER', 'MISTAKE'].includes(results[i - 1].classificationKey);
-	      const mateThreat = this._mateThreat(fenAfter);
+		      const mateThreat = options.skipMateThreat ? null : this._mateThreat(fenAfter);
 
       const classification = this.classifyMove({
         movePly,

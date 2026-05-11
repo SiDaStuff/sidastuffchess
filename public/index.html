@@ -15,22 +15,27 @@
 </head>
 <body class="menu-active">
   <div id="app">
-    <section id="main-menu" class="main-menu" aria-label="Main menu">
-      <div class="main-menu-brand" aria-hidden="true">
-        <img src="./assets/logo.png" alt="">
-        <span>SiDaStuff Chess</span>
-      </div>
-      <div class="main-menu-actions">
-        <button id="btn-menu-import" class="menu-button menu-button-primary">
-          <span class="material-symbols-outlined btn-symbol">upload_file</span>
-          <span>Import</span>
-        </button>
-        <button id="btn-menu-coach" class="menu-button">
-          <span class="material-symbols-outlined btn-symbol">psychology</span>
-          <span>Coach</span>
-        </button>
-      </div>
-    </section>
+	    <section id="main-menu" class="main-menu" aria-label="Main menu">
+	      <div class="main-menu-brand" aria-hidden="true">
+	        <img src="./assets/logo.png" alt="">
+	        <span>SiDaStuff Chess</span>
+	        <small>Game review and coach</small>
+	      </div>
+	      <div class="main-menu-actions">
+	        <button id="btn-menu-import" class="menu-button menu-button-primary">
+	          <span class="material-symbols-outlined btn-symbol">upload_file</span>
+	          <span>Review Game</span>
+	        </button>
+	        <button id="btn-menu-coach" class="menu-button">
+	          <span class="material-symbols-outlined btn-symbol">psychology</span>
+	          <span>Play Coach</span>
+	        </button>
+	      </div>
+	      <div class="main-menu-status" aria-hidden="true">
+	        <span>Stockfish 18</span>
+	        <span>Server review</span>
+	      </div>
+	    </section>
 
     <!-- Header -->
     <header class="header">
@@ -490,7 +495,7 @@
 		    <div class="modal-overlay engine-loading-overlay" id="engine-loading-overlay" style="display:none">
 		      <div class="modal modal-loading" role="status" aria-live="polite">
 		        <div class="modal-body">
-		          <img class="modal-loading-spinner" src="./assets/spinner.png" alt="">
+		          <div class="modal-loading-spinner" aria-hidden="true"></div>
 		          <h2>Loading Engine</h2>
 		          <p id="engine-loading-text">Preparing Stockfish...</p>
 		          <div class="engine-load-progress modal-engine-progress">

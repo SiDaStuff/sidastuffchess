@@ -26,13 +26,16 @@ class ServerStockfishEngine {
   constructor() {
     this.engine = null;
     this.ready = false;
-    this.handlers = [];
-    this.history = [];
-    this.activeSearch = null;
+	    this.handlers = [];
+	    this.history = [];
+	    this.activeSearch = null;
+	    this.currentMultiPv = 1;
   }
 
-  async init() {
-    this.engine = await initStockfish(stockfishEnginePath());
+	  async init() {
+	    const enginePath = stockfishEnginePath();
+	    delete require.cache[require.resolve(enginePath)];
+	    this.engine = await initStockfish(enginePath);
     this.engine.listener = (line) => this._handleLine(line);
     await this._uci();
     await this.configure();
@@ -89,9 +92,10 @@ class ServerStockfishEngine {
   async configure() {
     this._cancelActiveSearch();
     this._send('stop');
-    this._send('setoption name Hash value 32');
-    this._send('setoption name Threads value 1');
-    this._send('setoption name MultiPV value 1');
+	    this._send('setoption name Hash value 32');
+	    this._send('setoption name Threads value 1');
+	    this._send('setoption name MultiPV value 1');
+	    this.currentMultiPv = 1;
     const wait = this._waitFor('readyok', 12000);
     this._send('isready');
     await wait;
@@ -106,13 +110,21 @@ class ServerStockfishEngine {
     await wait;
   }
 
-  async evaluate(fen, depth = 10, timeoutMs = 9000) {
-    if (!this.ready) throw new Error('Engine not ready');
-    this._cancelActiveSearch();
-    this._send('stop');
-    const wait = this._waitFor('readyok', 12000);
-    this._send('isready');
-    await wait;
+	  async _ensureMultiPv(numPV = 1) {
+	    const next = Math.max(1, Math.floor(Number(numPV) || 1));
+	    if (this.currentMultiPv === next) return;
+	    this._send(`setoption name MultiPV value ${next}`);
+	    this.currentMultiPv = next;
+	    const wait = this._waitFor('readyok', 3000);
+	    this._send('isready');
+	    await wait;
+	  }
+
+	  async evaluate(fen, depth = 10, timeoutMs = 9000) {
+	    if (!this.ready) throw new Error('Engine not ready');
+	    this._cancelActiveSearch();
+	    this._send('stop');
+	    await this._ensureMultiPv(1);
 
     return new Promise((resolve, reject) => {
       let bestInfo = null;
@@ -160,14 +172,11 @@ class ServerStockfishEngine {
     });
   }
 
-  async evaluateMultiPV(fen, depth = 10, numPV = 2, timeoutMs = 12000) {
-    if (!this.ready) throw new Error('Engine not ready');
-    this._cancelActiveSearch();
-    this._send('stop');
-    this._send(`setoption name MultiPV value ${numPV}`);
-    const wait = this._waitFor('readyok', 12000);
-    this._send('isready');
-    await wait;
+	  async evaluateMultiPV(fen, depth = 10, numPV = 2, timeoutMs = 12000) {
+	    if (!this.ready) throw new Error('Engine not ready');
+	    this._cancelActiveSearch();
+	    this._send('stop');
+	    await this._ensureMultiPv(numPV);
 
     return new Promise((resolve, reject) => {
       const pvResults = {};
@@ -182,8 +191,7 @@ class ServerStockfishEngine {
         if (hardTimer) clearTimeout(hardTimer);
         this._removeHandler(handler);
         if (this.activeSearch?.handler === handler) this.activeSearch = null;
-        this._send('setoption name MultiPV value 1');
-        const lines = [];
+	        const lines = [];
         for (let i = 1; i <= numPV; i += 1) {
           if (pvResults[i]) lines.push(pvResults[i]);
         }
