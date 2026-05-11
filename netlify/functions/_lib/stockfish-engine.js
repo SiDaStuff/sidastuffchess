@@ -125,7 +125,7 @@ class ServerStockfishEngine {
 	    await wait;
 	  }
 
-	  async evaluate(fen, depth = 14, timeoutMs = 7000) {
+	  async evaluate(fen, depth = 14, timeoutMs = 6000) {
 	    if (!this.ready) throw new Error('Engine not ready');
 	    this._cancelActiveSearch();
 	    this._send('stop');
@@ -177,7 +177,7 @@ class ServerStockfishEngine {
     });
   }
 
-	  async evaluateMultiPV(fen, depth = 14, numPV = 3, timeoutMs = 7000) {
+	  async evaluateMultiPV(fen, depth = 14, numPV = 3, timeoutMs = 6000) {
 	    if (!this.ready) throw new Error('Engine not ready');
 	    this._cancelActiveSearch();
 	    this._send('stop');

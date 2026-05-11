@@ -1,16 +1,71 @@
 const { ServerStockfishEngine } = require('./_lib/stockfish-engine');
 const { loadAnalyzer, loadChess } = require('./_lib/analysis-loader');
-const { incrementPublicStats, claimUniqueBrilliantMoves } = require('./_lib/firebase-stats');
+const {
+  getPublicStats,
+  incrementPublicStats,
+  claimUniqueBrilliantMoves,
+  tryClaimReviewStats,
+  putServerReviewChunk,
+  getServerReviewChunks,
+  clearServerReviewSession,
+} = require('./_lib/firebase-stats');
 
 const SERVER_REVIEW_PROFILE = {
   depth: 14,
   multiPv: 2,
-  timeoutMs: 5000,
+  timeoutMs: 6000,
 };
+const SERVER_POSITION_BATCH_LIMIT = 8;
 
 let cachedEngine = null;
 let cachedEngineInit = null;
 let engineBusy = false;
+const evalCache = new Map();
+const EVAL_CACHE_LIMIT = 800;
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function cacheGet(key) {
+  if (!evalCache.has(key)) return null;
+  const value = evalCache.get(key);
+  evalCache.delete(key);
+  evalCache.set(key, value);
+  return cloneJson(value);
+}
+
+function cacheSet(key, value) {
+  evalCache.set(key, cloneJson(value));
+  while (evalCache.size > EVAL_CACHE_LIMIT) {
+    evalCache.delete(evalCache.keys().next().value);
+  }
+}
+
+function cachedEngineAdapter(engine) {
+  return {
+    get ready() {
+      return engine.ready;
+    },
+    newGame: () => engine.newGame(),
+    evaluate: async (fen, depth, timeoutMs) => {
+      const key = `eval|${depth}|${fen}`;
+      const cached = cacheGet(key);
+      if (cached) return cached;
+      const result = await engine.evaluate(fen, depth, timeoutMs);
+      cacheSet(key, result);
+      return result;
+    },
+    evaluateMultiPV: async (fen, depth, numPV, timeoutMs) => {
+      const key = `multipv|${depth}|${numPV}|${fen}`;
+      const cached = cacheGet(key);
+      if (cached) return cached;
+      const result = await engine.evaluateMultiPV(fen, depth, numPV, timeoutMs);
+      cacheSet(key, result);
+      return result;
+    },
+  };
+}
 
 function withTimeout(promise, timeoutMs, message) {
   let timer = null;
@@ -59,6 +114,66 @@ function brilliantMoveKey(entry) {
   return `${positionKey}|${entry.moveUci}`;
 }
 
+function reviewStatsKey(statsReview = {}) {
+  const moves = Array.isArray(statsReview.moves) ? statsReview.moves.join(' ') : '';
+  const initialFen = statsReview.initialFen || '';
+  const reviewId = statsReview.reviewId || '';
+  return `${reviewId}|${initialFen}|${moves}`;
+}
+
+function collectStoredEvals(chunks = {}, totalPositions = 0) {
+  const evals = new Array(totalPositions);
+  for (const chunk of Object.values(chunks || {})) {
+    const start = Math.max(0, Math.floor(Number(chunk?.start) || 0));
+    const chunkEvals = Array.isArray(chunk?.evals) ? chunk.evals : [];
+    chunkEvals.forEach((entry, offset) => {
+      if (start + offset < evals.length) evals[start + offset] = entry;
+    });
+  }
+  return evals;
+}
+
+async function recordChunkedReviewStats({ statsReview, chunkStart, evals, analyzer, initialFen }) {
+  if (!statsReview || !Array.isArray(statsReview.moves) || statsReview.moves.length === 0) return null;
+  const totalPositions = Math.max(0, Math.floor(Number(statsReview.totalPositions) || 0));
+  if (!totalPositions) return null;
+
+  const key = reviewStatsKey(statsReview);
+  await putServerReviewChunk(key, {
+    start: chunkStart,
+    evals,
+  });
+
+  const chunks = await getServerReviewChunks(key);
+  const allEvals = collectStoredEvals(chunks, totalPositions);
+  if (allEvals.some((entry) => !entry)) return null;
+
+  const moves = statsReview.moves;
+  const positions = analyzer._positionsForMoves(moves, initialFen);
+  if (positions.length !== allEvals.length) return getPublicStats();
+
+  const claimed = await tryClaimReviewStats(key);
+  if (!claimed) {
+    return getPublicStats();
+  }
+
+  const opening = analyzer.detectOpening(moves);
+  const results = analyzer.resultsFromEvals(
+    moves,
+    positions,
+    allEvals,
+    opening,
+    { initialFen, headers: statsReview.headers || {}, skipMateThreat: true }
+  );
+  const brilliantMoveKeys = results.map(brilliantMoveKey).filter(Boolean);
+  const brilliantMoves = await claimUniqueBrilliantMoves(brilliantMoveKeys);
+  const publicStats = await incrementPublicStats({ movesAnalyzed: moves.length, brilliantMoves });
+  clearServerReviewSession(key).catch((err) => {
+    console.warn('Could not clear server review session:', err.message);
+  });
+  return publicStats;
+}
+
 const json = (statusCode, body) => ({
   statusCode,
   headers: {
@@ -96,8 +211,8 @@ exports.handler = async (event, context = {}) => {
 	  if (moves.length > 3) {
 	    return retryable('Server full-game review is capped at 3 plies. Use server eval chunks for longer games.');
 	  }
-	  if (positions.length > 1) {
-	    return retryable('Server eval chunks are capped at 1 position.');
+	  if (positions.length > SERVER_POSITION_BATCH_LIMIT) {
+	    return retryable(`Server eval chunks are capped at ${SERVER_POSITION_BATCH_LIMIT} positions.`);
 	  }
 	
 	  const Chess = loadChess();
@@ -112,7 +227,7 @@ exports.handler = async (event, context = {}) => {
 		    timeoutMs: SERVER_REVIEW_PROFILE.timeoutMs,
 		  });
 
-  const initialFen = payload.initialFen || payload.headers?.FEN || undefined;
+  const initialFen = payload.initialFen || payload.headers?.FEN || payload.statsReview?.initialFen || undefined;
   if (initialFen) {
     const validation = new Chess();
     if (!validation.load(initialFen)) {
@@ -126,20 +241,34 @@ exports.handler = async (event, context = {}) => {
 		      8000,
 		      'Server engine is still warming up.'
 		    );
+		    const reviewEngine = cachedEngineAdapter(engine);
 	    if (positions.length > 0) {
-	      const evals = await withEngineQueue(() => analyzer.evaluatePositions(positions, engine, null));
+	      const evals = await withEngineQueue(() => analyzer.evaluatePositions(positions, reviewEngine, null));
+	      let publicStats = null;
+	      try {
+	        publicStats = await recordChunkedReviewStats({
+	          statsReview: payload.statsReview,
+	          chunkStart: Math.max(0, Math.floor(Number(payload.chunkStart) || 0)),
+	          evals,
+	          analyzer,
+	          initialFen,
+	        });
+	      } catch (err) {
+	        console.warn('Could not update chunked review stats:', err.message);
+	      }
 	      return json(200, {
 	        evals,
 	        depth: analyzer.analysisDepth,
 	        multiPv: analyzer.multiPvCount,
 	        source: 'netlify',
+	        publicStats,
 	      });
 	    }
 
 	    if (moves.length > 50) {
 	      analyzer._mateThreat = () => null;
 	    }
-	    const results = await withEngineQueue(() => analyzer.analyzeGame(moves, engine, null, { initialFen, headers: payload.headers || {} }));
+	    const results = await withEngineQueue(() => analyzer.analyzeGame(moves, reviewEngine, null, { initialFen, headers: payload.headers || {} }));
 	    const brilliantMoveKeys = results.map(brilliantMoveKey).filter(Boolean);
 	    let publicStats = null;
 	    try {
