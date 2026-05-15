@@ -31,7 +31,7 @@ class ChessReviewApp {
     this.lastLiveEvalFen = '';
     this.gameStatus = null;
     this.currentEvalScore = 0;
-			    this.coachMode = {
+	    this.coachMode = {
       active: false,
       humanColor: 'w',
       elo: 1200,
@@ -47,6 +47,30 @@ class ChessReviewApp {
 	      hintLevel: 0,
 	      hintFen: '',
 	      hintMove: '',
+	    };
+	    this.puzzleMode = {
+	      active: false,
+	      loading: false,
+	      current: null,
+	      source: '',
+	      initialFen: '',
+	      solution: [],
+	      step: 0,
+	      solved: false,
+	      failed: false,
+	      rating: 1500,
+	      streak: 0,
+	      solvedCount: 0,
+	      attemptedCount: 0,
+	      lastDelta: 0,
+	      requestToken: 0,
+	    };
+	    this.authMode = 'signin';
+	    this.authState = {
+	      user: null,
+	      profile: null,
+	      initialized: false,
+	      dbReady: false,
 	    };
 
     this.board.setChessInstance(this.chess);
@@ -77,8 +101,10 @@ class ChessReviewApp {
     this._initEngineControls();
     this._bindEvents();
     this._syncPlayerNameplates();
-    this._syncCoachVisibility();
+	    this._syncCoachVisibility();
+	    this._syncPuzzleVisibility();
     this._initEngine();
+	    this._initAuth();
 	    this._updateBoard();
 	    this._updateLiveEvalPanel();
 	    this._resetInsightPanel();
@@ -94,6 +120,7 @@ class ChessReviewApp {
 	    this.elStatsBrilliantMoves = document.getElementById('stats-brilliant-moves');
 	    this.elBtnMenuImport = document.getElementById('btn-menu-import');
     this.elBtnMenuCoach = document.getElementById('btn-menu-coach');
+	    this.elBtnMenuPuzzles = document.getElementById('btn-menu-puzzles');
     this.elBtnBackMenu = document.getElementById('btn-back-menu');
     this.elEngineChoiceModal = document.getElementById('engine-choice-modal');
     this.elEngineChoiceClose = document.getElementById('engine-choice-close');
@@ -107,6 +134,9 @@ class ChessReviewApp {
 	    this.elPromotionOptions = document.getElementById('promotion-options');
     this.elBtnImport = document.getElementById('btn-import');
 	    this.elBtnCoach = document.getElementById('btn-coach');
+	    this.elBtnPuzzles = document.getElementById('btn-puzzles');
+	    this.elBtnAccount = document.getElementById('btn-account');
+	    this.elAccountBtnLabel = document.getElementById('account-btn-label');
     this.elBtnSettings = document.getElementById('btn-settings');
     this.elBtnReview = document.getElementById('btn-review');
     this.elReviewBtnText = document.getElementById('review-btn-text');
@@ -196,6 +226,21 @@ class ChessReviewApp {
 	    this.elCoachSetupAdjustStyle = document.getElementById('coach-setup-adjust-style');
 	    this.elBtnCoachSetupStart = document.getElementById('btn-coach-setup-start');
 
+	    this.elPuzzleCard = document.getElementById('puzzle-card');
+	    this.elPuzzleSource = document.getElementById('puzzle-source');
+	    this.elPuzzleUserRating = document.getElementById('puzzle-user-rating');
+	    this.elPuzzleTargetRating = document.getElementById('puzzle-target-rating');
+	    this.elPuzzleStreak = document.getElementById('puzzle-streak');
+	    this.elPuzzleScore = document.getElementById('puzzle-score');
+	    this.elPuzzleStatus = document.getElementById('puzzle-status');
+	    this.elPuzzleTags = document.getElementById('puzzle-tags');
+	    this.elPuzzleTheme = document.getElementById('puzzle-theme');
+	    this.elPuzzleDifficulty = document.getElementById('puzzle-difficulty');
+	    this.elBtnPuzzleNext = document.getElementById('btn-puzzle-next');
+	    this.elBtnPuzzleDaily = document.getElementById('btn-puzzle-daily');
+	    this.elBtnPuzzleRetry = document.getElementById('btn-puzzle-retry');
+	    this.elBtnPuzzleReview = document.getElementById('btn-puzzle-review');
+
     this.elCriticalMoments = document.getElementById('critical-moments');
     this.elCriticalList = document.getElementById('critical-list');
 
@@ -211,6 +256,25 @@ class ChessReviewApp {
     this.elBtnImportUsername = document.getElementById('btn-import-username');
     this.elImportStatus = document.getElementById('import-status');
     this.elImportResults = document.getElementById('import-results');
+	    this.elAccountModal = document.getElementById('account-modal');
+	    this.elAccountClose = document.getElementById('account-close');
+	    this.elAccountSignedOut = document.getElementById('account-signed-out');
+	    this.elAccountSignedIn = document.getElementById('account-signed-in');
+	    this.elAuthUsernameField = document.getElementById('auth-username-field');
+	    this.elAuthUsername = document.getElementById('auth-username');
+	    this.elAuthEmail = document.getElementById('auth-email');
+	    this.elAuthPassword = document.getElementById('auth-password');
+	    this.elBtnAuthSigninMode = document.getElementById('btn-auth-signin-mode');
+	    this.elBtnAuthSignupMode = document.getElementById('btn-auth-signup-mode');
+	    this.elBtnAuthSubmit = document.getElementById('btn-auth-submit');
+	    this.elBtnGoogleAuth = document.getElementById('btn-google-auth');
+	    this.elBtnAuthSignout = document.getElementById('btn-auth-signout');
+	    this.elAccountStatus = document.getElementById('account-status');
+	    this.elAccountDisplayName = document.getElementById('account-display-name');
+	    this.elAccountEmailLabel = document.getElementById('account-email-label');
+	    this.elAccountPuzzleRating = document.getElementById('account-puzzle-rating');
+	    this.elAccountPuzzlesSolved = document.getElementById('account-puzzles-solved');
+	    this.elAccountPuzzlesAttempted = document.getElementById('account-puzzles-attempted');
   }
 
   _initEngineControls() {
@@ -320,9 +384,276 @@ class ChessReviewApp {
 	    if (brilliantMoveKey) this._recordPublicStatEvent('brilliant_move', { brilliantMoveKey });
 	  }
 
+	  _firebaseConfig() {
+	    return {
+	      apiKey: 'AIzaSyAVG8Awwd2FmVIvhzHTrZ19nhoUowZ1H3M',
+	      authDomain: 'singchess-sd.firebaseapp.com',
+	      databaseURL: 'https://singchess-sd-default-rtdb.firebaseio.com',
+	      projectId: 'singchess-sd',
+	      storageBucket: 'singchess-sd.firebasestorage.app',
+	      messagingSenderId: '784279280538',
+	      appId: '1:784279280538:web:4dcd70c24e90d8c30fb823',
+	      measurementId: 'G-2M387ZCKFE',
+	    };
+	  }
+
+	  _ensureFirebase() {
+	    if (!window.firebase?.initializeApp) return null;
+	    if (!window.firebase.apps?.length) {
+	      window.firebase.initializeApp(this._firebaseConfig());
+	    }
+	    return window.firebase;
+	  }
+
+	  _initAuth() {
+	    const firebase = this._ensureFirebase();
+	    if (!firebase?.auth) {
+	      this._setAccountStatus('Firebase auth did not load. Account features are unavailable.', 'error');
+	      this._syncAccountUi();
+	      return;
+	    }
+
+	    this.authState.dbReady = !!firebase.database;
+	    firebase.auth().onAuthStateChanged(async (user) => {
+	      this.authState.user = user || null;
+	      this.authState.initialized = true;
+	      if (user) {
+	        this.authState.profile = await this._loadUserProfile(user);
+	        this._applyProfileToPuzzleMode(this.authState.profile);
+	      } else {
+	        this.authState.profile = null;
+	      }
+	      this._syncAccountUi();
+	      this._syncPuzzlePanel();
+	    });
+	  }
+
+	  async _loadUserProfile(user) {
+	    const fallback = {
+	      uid: user.uid,
+	      username: user.displayName || (user.email ? user.email.split('@')[0] : 'Player'),
+	      email: user.email || '',
+	      puzzleRating: 1500,
+	      puzzleStats: { solved: 0, attempted: 0, streak: 0 },
+	    };
+
+	    try {
+	      const firebase = this._ensureFirebase();
+	      if (!firebase?.database) return fallback;
+	      const snap = await firebase.database().ref(`users/${user.uid}/profile`).once('value');
+	      const profile = snap.val() || {};
+	      const merged = {
+	        ...fallback,
+	        ...profile,
+	        puzzleStats: {
+	          ...fallback.puzzleStats,
+	          ...(profile.puzzleStats || {}),
+	        },
+	      };
+	      if (!profile.uid) await this._saveUserProfile(merged);
+	      return merged;
+	    } catch (_err) {
+	      return fallback;
+	    }
+	  }
+
+	  async _saveUserProfile(profile = this.authState.profile) {
+	    const user = this.authState.user;
+	    if (!user || !profile) return;
+	    this.authState.profile = {
+	      ...profile,
+	      uid: user.uid,
+	      email: user.email || profile.email || '',
+	      updatedAt: Date.now(),
+	    };
+	    try {
+	      const firebase = this._ensureFirebase();
+	      if (!firebase?.database) return;
+	      await firebase.database().ref(`users/${user.uid}/profile`).set(this.authState.profile);
+	    } catch (_err) {
+	      // Auth remains useful even if the database rules reject profile writes.
+	    }
+	  }
+
+	  _applyProfileToPuzzleMode(profile) {
+	    if (!profile) return;
+	    const stats = profile.puzzleStats || {};
+	    this.puzzleMode.rating = Math.max(100, Math.round(Number(profile.puzzleRating) || 1500));
+	    this.puzzleMode.solvedCount = Math.max(0, Number(stats.solved) || 0);
+	    this.puzzleMode.attemptedCount = Math.max(0, Number(stats.attempted) || 0);
+	    this.puzzleMode.streak = Math.max(0, Number(stats.streak) || 0);
+	  }
+
+	  _syncAccountUi() {
+	    const user = this.authState.user;
+	    const profile = this.authState.profile || {};
+	    const signedIn = !!user;
+	    if (this.elAccountSignedOut) this.elAccountSignedOut.hidden = signedIn;
+	    if (this.elAccountSignedIn) this.elAccountSignedIn.hidden = !signedIn;
+	    if (this.elAccountBtnLabel) {
+	      this.elAccountBtnLabel.textContent = signedIn ? (profile.username || user.displayName || 'Account') : 'Account';
+	    }
+	    if (!signedIn) return;
+
+	    const stats = profile.puzzleStats || {};
+	    if (this.elAccountDisplayName) this.elAccountDisplayName.textContent = profile.username || user.displayName || 'Player';
+	    if (this.elAccountEmailLabel) this.elAccountEmailLabel.textContent = user.email || profile.email || '';
+	    if (this.elAccountPuzzleRating) this.elAccountPuzzleRating.textContent = Math.round(Number(profile.puzzleRating) || this.puzzleMode.rating || 1500);
+	    if (this.elAccountPuzzlesSolved) this.elAccountPuzzlesSolved.textContent = Math.max(0, Number(stats.solved) || 0);
+	    if (this.elAccountPuzzlesAttempted) this.elAccountPuzzlesAttempted.textContent = Math.max(0, Number(stats.attempted) || 0);
+	  }
+
+	  _setAuthMode(mode) {
+	    this.authMode = mode === 'signup' ? 'signup' : 'signin';
+	    this.elBtnAuthSigninMode?.classList.toggle('active', this.authMode === 'signin');
+	    this.elBtnAuthSignupMode?.classList.toggle('active', this.authMode === 'signup');
+	    if (this.elAuthUsernameField) this.elAuthUsernameField.style.display = this.authMode === 'signup' ? 'flex' : 'none';
+	    this._setButtonLabel(this.elBtnAuthSubmit, this.authMode === 'signup' ? 'Sign Up' : 'Sign In');
+	    this._setAccountStatus('');
+	  }
+
+	  _showAccountModal() {
+	    this._setAuthMode(this.authMode || 'signin');
+	    this._syncAccountUi();
+	    if (this.elAccountModal) this.elAccountModal.style.display = 'flex';
+	  }
+
+	  _hideAccountModal() {
+	    if (this.elAccountModal) this.elAccountModal.style.display = 'none';
+	  }
+
+	  _setAccountStatus(message, kind = '') {
+	    if (!this.elAccountStatus) return;
+	    this.elAccountStatus.textContent = message || '';
+	    this.elAccountStatus.className = `account-status ${kind}`.trim();
+	  }
+
+	  async _handleEmailAuth() {
+	    const firebase = this._ensureFirebase();
+	    if (!firebase?.auth) {
+	      this._setAccountStatus('Firebase auth is unavailable.', 'error');
+	      return;
+	    }
+	    const email = (this.elAuthEmail?.value || '').trim();
+	    const password = this.elAuthPassword?.value || '';
+	    const username = (this.elAuthUsername?.value || '').trim();
+	    if (!email || !password || (this.authMode === 'signup' && !username)) {
+	      this._setAccountStatus('Fill in the required account fields.', 'error');
+	      return;
+	    }
+
+	    this._setAccountStatus('Working...');
+	    try {
+	      let credential;
+	      if (this.authMode === 'signup') {
+	        credential = await firebase.auth().createUserWithEmailAndPassword(email, password);
+	        this.authState.user = credential.user;
+	        await credential.user.updateProfile({ displayName: username });
+	        await this._saveUserProfile({
+	          uid: credential.user.uid,
+	          username,
+	          email,
+	          puzzleRating: this.puzzleMode.rating || 1500,
+	          puzzleStats: {
+	            solved: this.puzzleMode.solvedCount || 0,
+	            attempted: this.puzzleMode.attemptedCount || 0,
+	            streak: this.puzzleMode.streak || 0,
+	          },
+	        });
+	      } else {
+	        credential = await firebase.auth().signInWithEmailAndPassword(email, password);
+	      }
+	      this._setAccountStatus('Signed in.', 'success');
+	      setTimeout(() => this._hideAccountModal(), 450);
+	    } catch (err) {
+	      this._setAccountStatus(err.message || 'Authentication failed.', 'error');
+	    }
+	  }
+
+	  async _handleGoogleAuth() {
+	    const firebase = this._ensureFirebase();
+	    if (!firebase?.auth?.GoogleAuthProvider) {
+	      this._setAccountStatus('Google auth is unavailable.', 'error');
+	      return;
+	    }
+	    this._setAccountStatus('Opening Google sign-in...');
+	    try {
+	      const provider = new firebase.auth.GoogleAuthProvider();
+	      const credential = await firebase.auth().signInWithPopup(provider);
+	      const user = credential.user;
+	      this.authState.user = user;
+	      const existing = await this._loadUserProfile(user);
+	      await this._saveUserProfile({
+	        ...existing,
+	        uid: user.uid,
+	        username: existing.username || user.displayName || (user.email ? user.email.split('@')[0] : 'Player'),
+	        email: user.email || existing.email || '',
+	        puzzleRating: existing.puzzleRating || this.puzzleMode.rating || 1500,
+	      });
+	      this._setAccountStatus('Signed in with Google.', 'success');
+	      setTimeout(() => this._hideAccountModal(), 450);
+	    } catch (err) {
+	      this._setAccountStatus(err.message || 'Google sign-in failed.', 'error');
+	    }
+	  }
+
+	  async _handleSignOut() {
+	    const firebase = this._ensureFirebase();
+	    if (!firebase?.auth) return;
+	    await firebase.auth().signOut();
+	    this._setAccountStatus('');
+	    this._syncAccountUi();
+	  }
+
+	  _syncPuzzleVisibility() {
+	    if (this.elPuzzleCard) this.elPuzzleCard.hidden = !this.puzzleMode.active;
+	  }
+
+	  _syncPuzzlePanel() {
+	    if (!this.elPuzzleCard) return;
+	    const mode = this.puzzleMode;
+	    if (this.elPuzzleUserRating) this.elPuzzleUserRating.textContent = Math.round(mode.rating || 1500);
+	    if (this.elPuzzleTargetRating) this.elPuzzleTargetRating.textContent = mode.current?.puzzle?.rating || mode.rating || 1500;
+	    if (this.elPuzzleStreak) this.elPuzzleStreak.textContent = String(mode.streak || 0);
+	    if (this.elPuzzleScore) this.elPuzzleScore.textContent = `${mode.solvedCount || 0} / ${mode.attemptedCount || 0}`;
+	    if (this.elPuzzleSource) this.elPuzzleSource.textContent = mode.source || 'Lichess training';
+	    if (this.elBtnPuzzleNext) this.elBtnPuzzleNext.disabled = !!mode.loading;
+	    if (this.elBtnPuzzleDaily) this.elBtnPuzzleDaily.disabled = !!mode.loading;
+	    if (this.elBtnPuzzleRetry) this.elBtnPuzzleRetry.disabled = !mode.current || !!mode.loading;
+	    if (this.elBtnPuzzleReview) this.elBtnPuzzleReview.disabled = this.gameMoves.length === 0 || this.isAnalyzing;
+	    if (this.elPuzzleTags) {
+	      const themes = mode.current?.puzzle?.themes || [];
+	      this.elPuzzleTags.innerHTML = themes.length
+	        ? themes.slice(0, 8).map((theme) => `<span class="puzzle-tag">${this._escapeHtml(this._formatPuzzleTheme(theme))}</span>`).join('')
+	        : '';
+	    }
+	  }
+
+	  _setPuzzleStatus(message, kind = '') {
+	    if (!this.elPuzzleStatus) return;
+	    this.elPuzzleStatus.textContent = message || '';
+	    this.elPuzzleStatus.className = `puzzle-status ${kind}`.trim();
+	  }
+
+	  _escapeHtml(value) {
+	    return String(value ?? '')
+	      .replace(/&/g, '&amp;')
+	      .replace(/</g, '&lt;')
+	      .replace(/>/g, '&gt;')
+	      .replace(/"/g, '&quot;')
+	      .replace(/'/g, '&#39;');
+	  }
+
+	  _formatPuzzleTheme(theme) {
+	    return String(theme || '')
+	      .replace(/([a-z])([A-Z])/g, '$1 $2')
+	      .replace(/^./, (ch) => ch.toUpperCase());
+	  }
+
 				  _bindEvents() {
     this.elBtnMenuImport?.addEventListener('click', () => this._showEngineChoiceModal('import'));
     this.elBtnMenuCoach?.addEventListener('click', () => this._showEngineChoiceModal('coach'));
+    this.elBtnMenuPuzzles?.addEventListener('click', () => this._enterPuzzleMode());
     this.elBtnBackMenu?.addEventListener('click', () => this._showMainMenu());
     this.elEngineChoiceClose?.addEventListener('click', () => this._hideEngineChoiceModal());
     this.elEngineChoiceModal?.addEventListener('click', (e) => {
@@ -338,7 +669,18 @@ class ChessReviewApp {
 	      if (button) this._finishPromotionChoice(button.dataset.piece);
 	    });
     this.elBtnImport.addEventListener('click', () => this._showEngineChoiceModal('import'));
+    this.elBtnPuzzles?.addEventListener('click', () => this._enterPuzzleMode());
+	    this.elBtnAccount?.addEventListener('click', () => this._showAccountModal());
     this.elBtnSettings.addEventListener('click', () => this._showSettingsModal());
+	    this.elAccountClose?.addEventListener('click', () => this._hideAccountModal());
+	    this.elAccountModal?.addEventListener('click', (e) => {
+	      if (e.target === this.elAccountModal) this._hideAccountModal();
+	    });
+	    this.elBtnAuthSigninMode?.addEventListener('click', () => this._setAuthMode('signin'));
+	    this.elBtnAuthSignupMode?.addEventListener('click', () => this._setAuthMode('signup'));
+	    this.elBtnAuthSubmit?.addEventListener('click', () => this._handleEmailAuth());
+	    this.elBtnGoogleAuth?.addEventListener('click', () => this._handleGoogleAuth());
+	    this.elBtnAuthSignout?.addEventListener('click', () => this._handleSignOut());
     this.elModalClose.addEventListener('click', () => this._hidePgnModal());
     this.elSettingsClose.addEventListener('click', () => this._hideSettingsModal());
     this.elPgnModal.addEventListener('click', (e) => {
@@ -365,6 +707,10 @@ class ChessReviewApp {
 	      }
 	    });
 	    this.elBtnCoachSetupStart?.addEventListener('click', () => this._startCoachFromSetup());
+	    this.elBtnPuzzleNext?.addEventListener('click', () => this._loadNextPuzzle());
+	    this.elBtnPuzzleDaily?.addEventListener('click', () => this._loadDailyPuzzle());
+	    this.elBtnPuzzleRetry?.addEventListener('click', () => this._retryCurrentPuzzle());
+	    this.elBtnPuzzleReview?.addEventListener('click', () => this._reviewCurrentPuzzleLine());
 	    this.elBtnReview.addEventListener('click', () => this._startReview());
 	    this.elBtnLineExplorer?.addEventListener('click', () => this._exploreBestLineFromCurrentMove());
 	    this.elBtnReturnExplorer?.addEventListener('click', () => this._returnFromLineExplorer());
@@ -407,10 +753,12 @@ class ChessReviewApp {
 	    });
 	  }
 
-	  _enterReviewMode() {
-	    document.body.classList.remove('menu-active');
-	    document.body.dataset.mode = 'review';
-	    if (this.elLiveEval) this.elLiveEval.hidden = false;
+		  _enterReviewMode() {
+		    document.body.classList.remove('menu-active');
+		    document.body.dataset.mode = 'review';
+		    this.puzzleMode.active = false;
+		    this._syncPuzzleVisibility();
+		    if (this.elLiveEval) this.elLiveEval.hidden = false;
 	    if (this.coachMode.active) {
 	      this.coachMode.active = false;
 	      this.coachMode.thinking = false;
@@ -421,9 +769,11 @@ class ChessReviewApp {
 	    this._updateCurrentMoveIndicator();
 	  }
 
-  _enterCoachMode(options = null) {
-    document.body.classList.remove('menu-active');
-    document.body.dataset.mode = 'coach';
+	  _enterCoachMode(options = null) {
+	    document.body.classList.remove('menu-active');
+	    document.body.dataset.mode = 'coach';
+	    this.puzzleMode.active = false;
+	    this._syncPuzzleVisibility();
     if (this.elLiveEval) this.elLiveEval.hidden = false;
 	    this.elReviewSummary.style.display = 'none';
 	    this.elCriticalMoments.style.display = 'none';
@@ -453,11 +803,13 @@ class ChessReviewApp {
 	    this._setButtonLabel(this.elBtnAuto, 'Auto');
 	    this.liveEvalToken += 1;
 	    this.explorerReturnState = null;
-	    this.coachMode.active = false;
-	    this.coachMode.thinking = false;
-	    this.board.clearLoading();
-	    this.board.clearBestMoveArrow();
-	    this._syncCoachVisibility();
+		    this.coachMode.active = false;
+		    this.coachMode.thinking = false;
+		    this.puzzleMode.active = false;
+		    this.board.clearLoading();
+		    this.board.clearBestMoveArrow();
+		    this._syncCoachVisibility();
+		    this._syncPuzzleVisibility();
 	    document.body.classList.add('menu-active');
 	    delete document.body.dataset.mode;
 	  }
@@ -680,10 +1032,16 @@ class ChessReviewApp {
     if (this.elBtnCoachTakeback) {
       this.elBtnCoachTakeback.disabled = !this.coachMode.active || this.gameMoves.length === 0;
     }
-    if (this.elBtnReset) {
-      this.elBtnReset.disabled = this.isAnalyzing || (this.gameMoves.length === 0 && this.currentMoveIndex === -1);
-    }
-  }
+	    if (this.elBtnReset) {
+	      this.elBtnReset.disabled = this.isAnalyzing || (this.gameMoves.length === 0 && this.currentMoveIndex === -1);
+	    }
+	    if (this.elBtnPuzzleReview) {
+	      this.elBtnPuzzleReview.disabled = this.isAnalyzing || this.gameMoves.length === 0;
+	    }
+	    if (this.elBtnPuzzleRetry) {
+	      this.elBtnPuzzleRetry.disabled = this.isAnalyzing || this.puzzleMode.loading || !this.puzzleMode.current;
+	    }
+	  }
 
 	  _renderIdleEngineInfo(message) {
 	    const source = ENGINE_CATALOG[this.engineSettings.source]?.label || 'Engine';
@@ -967,11 +1325,362 @@ class ChessReviewApp {
 	    };
 	  }
 
-  _startCoachFromSetup() {
-    const setup = this._readCoachSetup();
-    this._hideCoachSetupModal();
-    this._enterCoachMode(setup);
-  }
+	  _startCoachFromSetup() {
+	    const setup = this._readCoachSetup();
+	    this._hideCoachSetupModal();
+	    this._enterCoachMode(setup);
+	  }
+
+	  async _enterPuzzleMode() {
+	    document.body.classList.remove('menu-active');
+	    document.body.dataset.mode = 'puzzle';
+	    if (this.elLiveEval) this.elLiveEval.hidden = false;
+	    if (this.coachMode.active) {
+	      this.coachMode.active = false;
+	      this.coachMode.thinking = false;
+	      this._syncCoachControls();
+	    }
+	    this.puzzleMode.active = true;
+	    this._syncPuzzleVisibility();
+	    this._syncPuzzlePanel();
+	    this._setPuzzleStatus(this.puzzleMode.current ? 'Continue the current puzzle.' : 'Loading a 1500-rated starter puzzle...', this.puzzleMode.current ? '' : 'loading');
+	    this._syncActionButtons();
+	    if (!this.puzzleMode.current) {
+	      await this._loadNextPuzzle({ starter: true });
+	    }
+	  }
+
+	  _puzzleDifficultyForRating() {
+	    const selected = this.elPuzzleDifficulty?.value || 'auto';
+	    if (selected !== 'auto') return selected;
+	    const rating = Number(this.puzzleMode.rating) || 1500;
+	    if (rating < 1000) return 'easiest';
+	    if (rating < 1300) return 'easier';
+	    if (rating < 1750) return 'normal';
+	    if (rating < 2150) return 'harder';
+	    return 'hardest';
+	  }
+
+	  async _fetchLichessJson(path, params = {}) {
+	    const url = new URL(`https://lichess.org${path}`);
+	    for (const [key, value] of Object.entries(params)) {
+	      if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, value);
+	    }
+	    const response = await fetch(url.toString(), {
+	      headers: { Accept: 'application/json' },
+	      cache: 'no-store',
+	    });
+	    if (!response.ok) {
+	      const text = await response.text().catch(() => '');
+	      throw new Error(text || `Lichess returned ${response.status}`);
+	    }
+	    return response.json();
+	  }
+
+	  async _loadDailyPuzzle() {
+	    await this._loadPuzzleFromSource(async () => ({
+	      data: await this._fetchLichessJson('/api/puzzle/daily'),
+	      source: 'Daily Lichess puzzle',
+	    }));
+	  }
+
+	  async _loadNextPuzzle(options = {}) {
+	    const theme = this.elPuzzleTheme?.value || 'mix';
+	    const difficulty = options.starter ? 'normal' : this._puzzleDifficultyForRating();
+	    const target = options.starter ? 1500 : (Number(this.puzzleMode.rating) || 1500);
+	    await this._loadPuzzleFromSource(async () => {
+	      let puzzles = [];
+	      try {
+	        const batch = await this._fetchLichessJson(`/api/puzzle/batch/${encodeURIComponent(theme || 'mix')}`, {
+	          difficulty,
+	          nb: 10,
+	        });
+	        puzzles = Array.isArray(batch?.puzzles) ? batch.puzzles : [];
+	      } catch (_err) {
+	        puzzles = [];
+	      }
+	      const data = puzzles.length
+	        ? puzzles.slice().sort((a, b) => Math.abs((a?.puzzle?.rating || 1500) - target) - Math.abs((b?.puzzle?.rating || 1500) - target))[0]
+	        : await this._fetchLichessJson('/api/puzzle/next', { angle: theme, difficulty });
+	      return {
+	        data,
+	        source: `Lichess ${theme === 'mix' ? 'mixed' : this._formatPuzzleTheme(theme)} puzzle`,
+	      };
+	    }, { target });
+	  }
+
+	  async _loadPuzzleFromSource(loader, options = {}) {
+	    const token = ++this.puzzleMode.requestToken;
+	    this.puzzleMode.loading = true;
+	    this._setPuzzleStatus('Fetching from Lichess...', 'loading');
+	    this._syncPuzzlePanel();
+	    this.board.setLoading(null, 'Loading puzzle');
+	    try {
+	      const loaded = await loader();
+	      if (token !== this.puzzleMode.requestToken) return;
+	      this._setupPuzzle(loaded.data, loaded.source, options);
+	    } catch (err) {
+	      console.error('Puzzle load failed:', err);
+	      if (token !== this.puzzleMode.requestToken) return;
+	      this._setPuzzleStatus(`Could not load a Lichess puzzle: ${err.message}`, 'error');
+	    } finally {
+	      if (token === this.puzzleMode.requestToken) {
+	        this.puzzleMode.loading = false;
+	        this.board.clearLoading();
+	        this._syncPuzzlePanel();
+	        this._syncActionButtons();
+	      }
+	    }
+	  }
+
+	  _setupPuzzle(data, source = 'Lichess puzzle', options = {}) {
+	    const setup = this._puzzleSetupFromLichess(data);
+	    const puzzle = data?.puzzle || {};
+	    this.puzzleMode = {
+	      ...this.puzzleMode,
+	      active: true,
+	      loading: false,
+	      current: data,
+	      source,
+	      initialFen: setup.fen,
+	      solution: Array.isArray(puzzle.solution) ? puzzle.solution.slice() : [],
+	      step: 0,
+	      solved: false,
+	      failed: false,
+	      lastDelta: 0,
+	    };
+
+	    this.originalGameMoves = [];
+	    this.gameMoves = [];
+	    this.currentMoveIndex = -1;
+	    this.explorerReturnState = null;
+	    this.analysisResults = null;
+	    this.liveMoveResults = [];
+	    this.liveEvalHistory = [];
+	    this.liveEvalToken += 1;
+	    this.initialFen = setup.fen;
+	    this.gameHeaders = {
+	      Event: 'Lichess Puzzle',
+	      Site: puzzle.id ? `https://lichess.org/training/${puzzle.id}` : 'https://lichess.org/training',
+	      White: setup.whiteName,
+	      Black: setup.blackName,
+	      WhiteElo: setup.whiteRating,
+	      BlackElo: setup.blackRating,
+	      FEN: setup.fen,
+	      PuzzleId: puzzle.id || '',
+	      PuzzleRating: puzzle.rating ? String(puzzle.rating) : '',
+	    };
+	    this.chess = new Chess(setup.fen);
+	    this.board.setChessInstance(this.chess);
+	    this.board.selectedSquare = null;
+	    this.board.legalMoves = [];
+	    this.board.clearBestMoveArrow();
+	    this.board.setHighlights([]);
+	    this.elReviewSummary.style.display = 'none';
+	    this.elMoveBadge.style.display = 'none';
+	    this.elCriticalMoments.style.display = 'none';
+	    this.elCriticalList.innerHTML = '';
+	    this._clearReviewExtras();
+	    this._resetInsightPanel();
+	    this._setBoardOrientationForColor(this.chess.turn());
+	    this._updateBoard();
+	    this._renderMoveList();
+	    this._updateCurrentMoveIndicator();
+	    this._updateEvalBar(0);
+	    this._drawEvalGraph();
+	    this._updateGameStatus();
+	    this._renderIdleEngineInfo('Puzzle loaded. Solve it, then review the line.');
+	    this._requestLiveEvaluation('Analyzing puzzle position...');
+	    this._playNamedSound('start');
+	    const targetText = options.target ? ` Target: ${Math.round(options.target)}.` : '';
+	    this._setPuzzleStatus(`Find the best move for ${this.chess.turn() === 'w' ? 'White' : 'Black'}. Puzzle rating ${puzzle.rating || 'unknown'}.${targetText}`);
+	    this._syncPuzzlePanel();
+	    this._syncActionButtons();
+	  }
+
+	  _puzzleSetupFromLichess(data) {
+	    const puzzle = data?.puzzle || {};
+	    const game = data?.game || {};
+	    const players = Array.isArray(game.players) ? game.players : [];
+	    const white = players.find((p) => p.color === 'white') || {};
+	    const black = players.find((p) => p.color === 'black') || {};
+	    if (puzzle.fen) {
+	      const check = new Chess();
+	      if (check.load(puzzle.fen)) {
+	        return {
+	          fen: puzzle.fen,
+	          whiteName: white.name || 'White',
+	          blackName: black.name || 'Black',
+	          whiteRating: white.rating ? String(white.rating) : '',
+	          blackRating: black.rating ? String(black.rating) : '',
+	        };
+	      }
+	    }
+
+	    const chess = new Chess();
+	    const moves = this._parseMoveText(game.pgn || '');
+	    const limit = Math.max(0, Math.min(Number(puzzle.initialPly) || moves.length, moves.length));
+	    for (const san of moves.slice(0, limit)) {
+	      if (!chess.move(san, { sloppy: true })) break;
+	    }
+	    return {
+	      fen: chess.fen(),
+	      whiteName: white.name || 'White',
+	      blackName: black.name || 'Black',
+	      whiteRating: white.rating ? String(white.rating) : '',
+	      blackRating: black.rating ? String(black.rating) : '',
+	    };
+	  }
+
+	  async _handlePuzzleMove(from, to) {
+	    if (this.puzzleMode.loading || this.puzzleMode.solved || this.puzzleMode.failed || !this.puzzleMode.current) return;
+	    const fenBefore = this.chess.fen();
+	    const promotion = this._isPromotionMove(from, to) ? await this._requestPromotionPiece() : undefined;
+	    const move = this.chess.move({ from, to, promotion }, { sloppy: true });
+	    if (!move) {
+	      this.board.setPositionFromFen(this.chess.fen());
+	      return;
+	    }
+
+	    const moveUci = `${move.from}${move.to}${move.promotion || ''}`;
+	    const expected = this.puzzleMode.solution[this.puzzleMode.step] || '';
+	    this.gameMoves.push(move.san);
+	    this.currentMoveIndex = this.gameMoves.length - 1;
+	    this.board.setChessInstance(this.chess);
+	    this._updateBoard();
+	    this._updateCurrentMoveIndicator();
+	    this._renderMoveList();
+	    this._playMoveSound(move, this.currentMoveIndex);
+	    this._syncActionButtons();
+
+	    if (moveUci !== expected) {
+	      this.puzzleMode.failed = true;
+	      this.board.setHighlights(this._moveHighlightsForSquares(move.from, move.to, {
+	        color: '#F8D7D4',
+	        ringColor: '#CA3431',
+	      }));
+	      this.board.setBestMoveArrow(expected, { color: '#96BC4B' });
+	      this._recordPuzzleAttempt(false);
+	      this._setPuzzleStatus(`Incorrect. Best move was ${this.analyzer.uciToSan(fenBefore, expected) || expected}. Review the line or retry.`, 'error');
+	      this._requestLiveEvaluation(`Reviewing ${move.san}`, {
+	        fenBefore,
+	        fenAfter: this.chess.fen(),
+	        moveObj: move,
+	        moveIndex: this.currentMoveIndex,
+	      });
+	      return;
+	    }
+
+	    this.puzzleMode.step += 1;
+	    this.board.setHighlights(this._moveHighlightsForSquares(move.from, move.to, {
+	      color: '#DCEFD7',
+	      ringColor: '#4f7d3c',
+	    }));
+	    this.board.clearBestMoveArrow();
+	    this._requestLiveEvaluation(`Correct: ${move.san}`, {
+	      fenBefore,
+	      fenAfter: this.chess.fen(),
+	      moveObj: move,
+	      moveIndex: this.currentMoveIndex,
+	    });
+
+	    if (this.puzzleMode.step >= this.puzzleMode.solution.length) {
+	      this.puzzleMode.solved = true;
+	      this._recordPuzzleAttempt(true);
+	      this._setPuzzleStatus(`Solved. Rating ${this.puzzleMode.lastDelta >= 0 ? '+' : ''}${this.puzzleMode.lastDelta}.`, 'success');
+	      return;
+	    }
+
+	    this._setPuzzleStatus('Correct. Let the opponent reply...');
+	    window.setTimeout(() => this._playPuzzleReply(), 420);
+	  }
+
+	  _playPuzzleReply() {
+	    if (!this.puzzleMode.active || this.puzzleMode.solved || this.puzzleMode.failed) return;
+	    const expected = this.puzzleMode.solution[this.puzzleMode.step];
+	    if (!expected) return;
+	    const fenBefore = this.chess.fen();
+	    const move = this.chess.move({
+	      from: expected.slice(0, 2),
+	      to: expected.slice(2, 4),
+	      promotion: expected[4],
+	    });
+	    if (!move) return;
+	    this.gameMoves.push(move.san);
+	    this.currentMoveIndex = this.gameMoves.length - 1;
+	    this.puzzleMode.step += 1;
+	    this.board.setChessInstance(this.chess);
+	    this._updateBoard();
+	    this._updateCurrentMoveIndicator();
+	    this._renderMoveList();
+	    this.board.setHighlights(this._moveHighlightsForSquares(move.from, move.to, {
+	      color: '#E6EEF7',
+	      ringColor: '#346ea5',
+	    }));
+	    this._playMoveSound(move, this.currentMoveIndex);
+	    this._requestLiveEvaluation(`Opponent replied ${move.san}`, {
+	      fenBefore,
+	      fenAfter: this.chess.fen(),
+	      moveObj: move,
+	      moveIndex: this.currentMoveIndex,
+	    });
+	    if (this.puzzleMode.step >= this.puzzleMode.solution.length) {
+	      this.puzzleMode.solved = true;
+	      this._recordPuzzleAttempt(true);
+	      this._setPuzzleStatus(`Solved. Rating ${this.puzzleMode.lastDelta >= 0 ? '+' : ''}${this.puzzleMode.lastDelta}.`, 'success');
+	    } else {
+	      this._setPuzzleStatus(`Find the next move for ${this.chess.turn() === 'w' ? 'White' : 'Black'}.`);
+	    }
+	    this._syncPuzzlePanel();
+	    this._syncActionButtons();
+	  }
+
+	  _recordPuzzleAttempt(won) {
+	    const puzzleRating = Number(this.puzzleMode.current?.puzzle?.rating) || 1500;
+	    const rating = Number(this.puzzleMode.rating) || 1500;
+	    const expected = 1 / (1 + Math.pow(10, (puzzleRating - rating) / 400));
+	    const delta = Math.round(24 * ((won ? 1 : 0) - expected));
+	    this.puzzleMode.rating = Math.max(100, rating + delta);
+	    this.puzzleMode.lastDelta = delta;
+	    this.puzzleMode.attemptedCount += 1;
+	    if (won) {
+	      this.puzzleMode.solvedCount += 1;
+	      this.puzzleMode.streak += 1;
+	    } else {
+	      this.puzzleMode.streak = 0;
+	    }
+	    this._persistPuzzleStats();
+	    this._syncPuzzlePanel();
+	  }
+
+	  async _persistPuzzleStats() {
+	    const user = this.authState.user;
+	    if (!user) return;
+	    const profile = {
+	      ...(this.authState.profile || {}),
+	      uid: user.uid,
+	      username: this.authState.profile?.username || user.displayName || (user.email ? user.email.split('@')[0] : 'Player'),
+	      email: user.email || this.authState.profile?.email || '',
+	      puzzleRating: this.puzzleMode.rating,
+	      puzzleStats: {
+	        solved: this.puzzleMode.solvedCount,
+	        attempted: this.puzzleMode.attemptedCount,
+	        streak: this.puzzleMode.streak,
+	      },
+	    };
+	    await this._saveUserProfile(profile);
+	    this._syncAccountUi();
+	  }
+
+	  _retryCurrentPuzzle() {
+	    if (!this.puzzleMode.current) return;
+	    this._setupPuzzle(this.puzzleMode.current, this.puzzleMode.source || 'Lichess puzzle');
+	  }
+
+	  _reviewCurrentPuzzleLine() {
+	    if (this.gameMoves.length === 0) return;
+	    this._startReview();
+	  }
 
   _syncSettingsModal() {
 	    if (this.elEngineSource) this.elEngineSource.value = this.engineSettings.source;
@@ -1945,9 +2654,13 @@ class ChessReviewApp {
 	    if (resolve) resolve(['q', 'r', 'b', 'n'].includes(piece) ? piece : 'q');
 	  }
 
-	  async _handleBoardMove(from, to) {
-	    if (this.isAnalyzing) return;
-	    if (this.coachMode.active && !this._isCoachHumanTurn()) return;
+		  async _handleBoardMove(from, to) {
+		    if (this.isAnalyzing) return;
+		    if (this.puzzleMode.active) {
+		      await this._handlePuzzleMove(from, to);
+		      return;
+		    }
+		    if (this.coachMode.active && !this._isCoachHumanTurn()) return;
 
 	    const fenBefore = this.chess.fen();
 	    const promotion = this._isPromotionMove(from, to) ? await this._requestPromotionPiece() : undefined;
@@ -2749,10 +3462,10 @@ class ChessReviewApp {
   _renderMoveList() {
     this.elMoveList.innerHTML = '';
 
-    if (this.gameMoves.length === 0) {
-      this.elMoveList.innerHTML = '<div class="move-list-empty">Import a PGN or load a sample game to begin.</div>';
-      return;
-    }
+	    if (this.gameMoves.length === 0) {
+	      this.elMoveList.innerHTML = `<div class="move-list-empty">${this.puzzleMode.active ? 'Solve the puzzle to build a review line.' : 'Import a PGN or start coach to begin.'}</div>`;
+	      return;
+	    }
 
     for (let i = 0; i < this.gameMoves.length; i += 2) {
       const moveNum = Math.floor(i / 2) + 1;
@@ -3001,14 +3714,27 @@ class ChessReviewApp {
 	    };
 	
 		    try {
-		      if (serverReview) {
-		        try {
-		          this.analysisResults = await this._analyzeGameOnServer();
-			        } catch (serverErr) {
-			          console.warn('Server analysis failed:', serverErr);
-			          throw serverErr;
-	        }
-			      } else {
+			      if (serverReview) {
+			        try {
+			          this.analysisResults = await this._analyzeGameOnServer();
+				        } catch (serverErr) {
+				          console.warn('Server analysis failed:', serverErr);
+				          if (!this.engine?.ready) throw serverErr;
+				          this.elReviewBtnText.textContent = 'Browser fallback...';
+				          this._updateLiveEvalPanel({
+				            busy: true,
+				            score: null,
+				            line: 'Server review unavailable. Using browser Stockfish.',
+				            meta: serverErr.message || 'Local fallback',
+				          });
+				          this.analysisResults = await this.analyzer.analyzeGame(
+				            this.gameMoves,
+				            this.engine,
+				            updateReviewProgress,
+				            { initialFen: this.initialFen, headers: this.gameHeaders }
+				          );
+		        }
+				      } else {
 			        this.analysisResults = await this.analyzer.analyzeGame(
 			          this.gameMoves,
 		          this.engine,

@@ -179,9 +179,9 @@ body:not(.menu-active) .main-menu {
   position: relative;
   z-index: 1;
   align-self: start;
-  width: min(460px, 100%);
+  width: min(560px, 100%);
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1476,6 +1476,129 @@ body[data-mode="coach"] .analysis-overview {
   display: none;
 }
 
+.puzzle-card {
+  display: grid;
+  gap: 14px;
+}
+
+.puzzle-card[hidden] {
+  display: none;
+}
+
+.puzzle-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.puzzle-source,
+.puzzle-meta span,
+.puzzle-rating-pill span,
+.account-profile-row span,
+.account-stats span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.puzzle-rating-pill {
+  min-width: 92px;
+  padding: 8px 10px;
+  background: var(--bg-strong);
+  color: var(--accent-contrast);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.puzzle-rating-pill span {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.puzzle-rating-pill strong,
+.puzzle-meta strong {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1.08rem;
+}
+
+.puzzle-status {
+  min-height: 48px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.puzzle-status.success {
+  color: var(--clr-best);
+  border-color: rgba(79, 125, 60, 0.26);
+}
+
+.puzzle-status.error {
+  color: var(--clr-blunder);
+  border-color: rgba(177, 47, 41, 0.26);
+}
+
+.puzzle-status.loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--clr-great);
+}
+
+.puzzle-status.loading::before {
+  content: '';
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  background: url('../assets/spinner.png') center / contain no-repeat;
+  animation: spinner-rotate 0.8s linear infinite;
+}
+
+.puzzle-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.puzzle-meta {
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.puzzle-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.puzzle-tag {
+  padding: 5px 8px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.puzzle-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.puzzle-action {
+  min-height: 42px;
+}
+
 .coach-card.coach-focus {
   animation: coachFocus 800ms ease;
 }
@@ -1553,6 +1676,102 @@ body[data-mode="coach"] .analysis-overview {
 
 .modal-coach-setup {
   width: min(540px, 100%);
+}
+
+.modal-account {
+  width: min(520px, 100%);
+}
+
+.account-signed-out,
+.account-signed-in {
+  display: grid;
+  gap: 12px;
+}
+
+.account-signed-in[hidden] {
+  display: none;
+}
+
+.account-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.account-mode {
+  min-height: 40px;
+  background: #f8fafc;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.account-mode.active {
+  background: var(--bg-strong);
+  color: var(--accent-contrast);
+  border-color: var(--bg-strong);
+}
+
+.auth-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 10px;
+}
+
+.account-status {
+  min-height: 20px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.account-status.error {
+  color: var(--clr-blunder);
+}
+
+.account-status.success {
+  color: var(--clr-best);
+}
+
+.account-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.account-avatar {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  background: var(--bg-strong);
+  color: var(--accent-contrast);
+  border-radius: 8px;
+}
+
+.account-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.account-stats div {
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.account-stats strong {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1.04rem;
 }
 
 .coach-setup-grid {
@@ -2479,6 +2698,13 @@ body[data-mode="coach"] .analysis-overview {
 	  .main-menu-actions {
 	    grid-template-columns: 1fr;
 	  }
+
+  .puzzle-controls,
+  .puzzle-meta-grid,
+  .auth-actions,
+  .account-stats {
+    grid-template-columns: 1fr;
+  }
 
   .public-stats {
     grid-template-columns: 1fr;

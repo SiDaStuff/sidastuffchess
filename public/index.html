@@ -26,9 +26,13 @@
 		          <span class="material-symbols-outlined btn-symbol">upload_file</span>
 		          <span>Review Game</span>
 	        </button>
-	        <button id="btn-menu-coach" class="menu-button">
+		        <button id="btn-menu-coach" class="menu-button">
 	          <span class="material-symbols-outlined btn-symbol">psychology</span>
 		          <span>Play Coach</span>
+		        </button>
+	        <button id="btn-menu-puzzles" class="menu-button">
+	          <span class="material-symbols-outlined btn-symbol">extension</span>
+		          <span>Puzzles</span>
 		        </button>
 		      </div>
 		      <div class="public-stats stats-loading" id="public-stats" aria-label="Public site stats">
@@ -77,6 +81,18 @@
           <span class="btn-content">
             <span class="material-symbols-outlined btn-symbol">psychology</span>
             <span class="btn-label">Coach</span>
+          </span>
+        </button>
+        <button id="btn-puzzles" class="btn btn-secondary">
+          <span class="btn-content">
+            <span class="material-symbols-outlined btn-symbol">extension</span>
+            <span class="btn-label">Puzzles</span>
+          </span>
+        </button>
+        <button id="btn-account" class="btn btn-secondary">
+          <span class="btn-content">
+            <span class="material-symbols-outlined btn-symbol">account_circle</span>
+            <span id="account-btn-label" class="btn-label">Account</span>
           </span>
         </button>
         <button id="btn-settings" class="btn btn-secondary">
@@ -276,7 +292,7 @@
                 </div>
                 <div>
                   <h3>Coach</h3>
-              <span class="coach-coming-soon">Live coach</span>
+                  <span class="coach-coming-soon">Live coach</span>
                 </div>
               </div>
               <span class="coach-state" id="coach-state">Ready</span>
@@ -305,6 +321,84 @@
                 <span class="btn-content">
                   <span class="material-symbols-outlined btn-symbol">lightbulb</span>
                   <span class="btn-label">Hint</span>
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div class="puzzle-card card panel-wide" id="puzzle-card" hidden>
+            <div class="puzzle-card-header">
+              <div>
+                <h3>Puzzles</h3>
+                <span class="puzzle-source" id="puzzle-source">Lichess training</span>
+              </div>
+              <div class="puzzle-rating-pill">
+                <span>Rating</span>
+                <strong id="puzzle-user-rating">1500</strong>
+              </div>
+            </div>
+            <div class="puzzle-status" id="puzzle-status">Load a puzzle to begin.</div>
+            <div class="puzzle-meta-grid">
+              <div class="puzzle-meta">
+                <span>Target</span>
+                <strong id="puzzle-target-rating">1500</strong>
+              </div>
+              <div class="puzzle-meta">
+                <span>Streak</span>
+                <strong id="puzzle-streak">0</strong>
+              </div>
+              <div class="puzzle-meta">
+                <span>Score</span>
+                <strong id="puzzle-score">0 / 0</strong>
+              </div>
+            </div>
+            <div class="puzzle-tags" id="puzzle-tags"></div>
+            <div class="puzzle-controls">
+              <label class="field">
+                <span class="field-label">Theme</span>
+                <select id="puzzle-theme" class="input-select">
+                  <option value="mix">Mixed</option>
+                  <option value="fork">Forks</option>
+                  <option value="pin">Pins</option>
+                  <option value="skewer">Skewers</option>
+                  <option value="mate">Checkmates</option>
+                  <option value="endgame">Endgames</option>
+                  <option value="defensiveMove">Defense</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="field-label">Difficulty</span>
+                <select id="puzzle-difficulty" class="input-select">
+                  <option value="auto">Auto</option>
+                  <option value="easiest">Easiest</option>
+                  <option value="easier">Easier</option>
+                  <option value="normal">Normal</option>
+                  <option value="harder">Harder</option>
+                  <option value="hardest">Hardest</option>
+                </select>
+              </label>
+              <button id="btn-puzzle-next" class="btn btn-primary puzzle-action">
+                <span class="btn-content">
+                  <span class="material-symbols-outlined btn-symbol">navigate_next</span>
+                  <span class="btn-label">Next Puzzle</span>
+                </span>
+              </button>
+              <button id="btn-puzzle-daily" class="btn btn-secondary puzzle-action">
+                <span class="btn-content">
+                  <span class="material-symbols-outlined btn-symbol">today</span>
+                  <span class="btn-label">Daily</span>
+                </span>
+              </button>
+              <button id="btn-puzzle-retry" class="btn btn-secondary puzzle-action" disabled>
+                <span class="btn-content">
+                  <span class="material-symbols-outlined btn-symbol">replay</span>
+                  <span class="btn-label">Retry</span>
+                </span>
+              </button>
+              <button id="btn-puzzle-review" class="btn btn-secondary puzzle-action" disabled>
+                <span class="btn-content">
+                  <span class="material-symbols-outlined btn-symbol">analytics</span>
+                  <span class="btn-label">Review Puzzle</span>
                 </span>
               </button>
             </div>
@@ -480,6 +574,80 @@
 	      </div>
 	    </div>
 
+    <!-- Account Modal -->
+    <div class="modal-overlay" id="account-modal" style="display:none">
+      <div class="modal modal-account">
+        <div class="modal-header">
+          <h2>Account</h2>
+          <button type="button" class="modal-close material-symbols-outlined" id="account-close" aria-label="Close">close</button>
+        </div>
+        <div class="modal-body">
+          <div class="account-signed-out" id="account-signed-out">
+            <div class="account-mode-switch" role="group" aria-label="Account mode">
+              <button id="btn-auth-signin-mode" class="account-mode active" type="button">Sign In</button>
+              <button id="btn-auth-signup-mode" class="account-mode" type="button">Sign Up</button>
+            </div>
+            <label class="field" id="auth-username-field">
+              <span class="field-label">Username</span>
+              <input id="auth-username" class="input-select" type="text" autocomplete="username" placeholder="Your chess name">
+            </label>
+            <label class="field">
+              <span class="field-label">Email</span>
+              <input id="auth-email" class="input-select" type="email" autocomplete="email" placeholder="you@example.com">
+            </label>
+            <label class="field">
+              <span class="field-label">Password</span>
+              <input id="auth-password" class="input-select" type="password" autocomplete="current-password" placeholder="At least 6 characters">
+            </label>
+            <div class="auth-actions">
+              <button id="btn-auth-submit" class="btn btn-primary" type="button">
+                <span class="btn-content">
+                  <span class="material-symbols-outlined btn-symbol">login</span>
+                  <span class="btn-label">Sign In</span>
+                </span>
+              </button>
+              <button id="btn-google-auth" class="btn btn-secondary" type="button">
+                <span class="btn-content">
+                  <span class="material-symbols-outlined btn-symbol">account_circle</span>
+                  <span class="btn-label">Continue with Google</span>
+                </span>
+              </button>
+            </div>
+            <p class="account-status" id="account-status"></p>
+          </div>
+          <div class="account-signed-in" id="account-signed-in" hidden>
+            <div class="account-profile-row">
+              <div class="account-avatar material-symbols-outlined" aria-hidden="true">person</div>
+              <div>
+                <strong id="account-display-name">Player</strong>
+                <span id="account-email-label"></span>
+              </div>
+            </div>
+            <div class="account-stats">
+              <div>
+                <span>Puzzle rating</span>
+                <strong id="account-puzzle-rating">1500</strong>
+              </div>
+              <div>
+                <span>Solved</span>
+                <strong id="account-puzzles-solved">0</strong>
+              </div>
+              <div>
+                <span>Attempted</span>
+                <strong id="account-puzzles-attempted">0</strong>
+              </div>
+            </div>
+            <button id="btn-auth-signout" class="btn btn-secondary" type="button">
+              <span class="btn-content">
+                <span class="material-symbols-outlined btn-symbol">logout</span>
+                <span class="btn-label">Sign Out</span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
 		    <!-- Engine Choice Modal -->
 		    <div class="modal-overlay" id="engine-choice-modal" style="display:none">
 		      <div class="modal modal-engine-choice">
@@ -604,6 +772,9 @@
 	  <!-- Chess.js from CDN -->
 	  <script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
 	  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11" crossorigin="anonymous"></script>
+	  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js" crossorigin="anonymous"></script>
+	  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js" crossorigin="anonymous"></script>
+	  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js" crossorigin="anonymous"></script>
 	  
 	  <!-- App Modules -->
   <script src="./js/pieces.js"></script>
