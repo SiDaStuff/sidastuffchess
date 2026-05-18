@@ -203,11 +203,11 @@ exports.handler = async (event, context = {}) => {
     if (moves.length > 120) {
       return retryable('Server review is capped at 120 plies.');
     }
-    if (moves.length > 3) {
-      return retryable('Server full-game review is capped at 3 plies. Use server eval chunks for longer games.');
+    if (moves.length > 120) {
+      return retryable('Server review is capped at 120 plies. Use the streaming endpoint for full games.');
     }
-    if (positions.length > SERVER_POSITION_BATCH_LIMIT) {
-      return retryable(`Server eval chunks are capped at ${SERVER_POSITION_BATCH_LIMIT} positions.`);
+    if (positions.length > 120) {
+      return retryable('Server review is capped at 120 positions per request.');
     }
 
       const Chess = loadChess();
@@ -387,23 +387,20 @@ exports.streamHandler = async (req, res) => {
       const engine = await withTimeout(getServerEngine(preferFullServer), 8000, 'Server engine is still warming up.');
       const reviewEngine = cachedEngineAdapter(engine);
       const positions = analyzer._positionsForMoves(moves, initialFen);
-      const evals = [];
-      const chunkSize = positions.length > 80 ? 6 : SERVER_POSITION_BATCH_LIMIT;
-
-      for (let i = 0; i < positions.length; i += chunkSize) {
-        if (res.destroyed) return;
-        const chunk = positions.slice(i, i + chunkSize);
-        const chunkEvals = await withEngineQueue(() => analyzer.evaluatePositions(chunk, reviewEngine, null));
-        chunkEvals.forEach((entry, offset) => {
-          evals[i + offset] = entry;
-        });
-        sseWrite(res, 'progress', {
-          completed: Math.min(i + chunkEvals.length, positions.length),
-          total: positions.length,
-          chunkStart: i,
-          evals: chunkEvals,
-        });
+      if (moves.length > 50) {
+        analyzer._mateThreat = () => null;
       }
+      const evals = await withEngineQueue(() => analyzer.evaluatePositions(
+        positions,
+        reviewEngine,
+        (index, total) => {
+          if (res.destroyed) return;
+          sseWrite(res, 'progress', {
+            completed: index + 1,
+            total,
+          });
+        },
+      ));
 
       const results = analyzer.resultsFromEvals(
         moves,

@@ -313,18 +313,25 @@ function scoreMetrics(metricsList) {
   };
 }
 
-function parseGame(pgn) {
+function parseGame(pgn, options = {}) {
   const Chess = loadChess();
   const chess = new Chess();
   const normalized = String(pgn || '').replace(/\r\n?/g, '\n').trim();
   if (!chess.load_pgn(normalized, { sloppy: true })) {
     throw new Error('Could not parse one of the PGNs.');
   }
+  const moves = chess.history();
+  const limit = options.full ? moves.length : Math.min(moves.length, MAX_PLIES_PER_GAME);
   return {
     headers: { ...readHeaders(normalized), ...chess.header() },
-    moves: chess.history().slice(0, MAX_PLIES_PER_GAME),
+    moves: moves.slice(0, limit),
     pgn: normalized,
   };
+}
+
+function sseWrite(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data || {})}\n\n`);
 }
 
 async function lichessGames(username, limit) {
@@ -344,18 +351,28 @@ async function lichessGames(username, limit) {
   return splitPgnGames(text);
 }
 
+const CHESSCOM_HEADERS = {
+  Accept: 'application/json',
+  'User-Agent': 'Mozilla/5.0 (compatible; SiDaStuffChess/1.0; +https://lichess.org)',
+};
+
 async function chessComGames(username, limit) {
   const archiveResponse = await fetchCompat(`https://api.chess.com/pub/player/${encodeURIComponent(username)}/games/archives`, {
-    headers: { Accept: 'application/json' },
+    headers: CHESSCOM_HEADERS,
   });
-  if (!archiveResponse.ok) throw new Error(`Chess.com responded with ${archiveResponse.status}`);
+  if (!archiveResponse.ok) {
+    if (archiveResponse.status === 403) {
+      throw new Error('Chess.com blocked this request. Try again later or paste a PGN instead.');
+    }
+    throw new Error(`Chess.com responded with ${archiveResponse.status}`);
+  }
   const archiveData = await archiveResponse.json();
   const archives = Array.isArray(archiveData.archives) ? archiveData.archives.slice().reverse() : [];
   const games = [];
 
   for (const monthUrl of archives) {
     if (games.length >= Math.max(limit, 20)) break;
-    const monthResponse = await fetchCompat(monthUrl, { headers: { Accept: 'application/json' } });
+    const monthResponse = await fetchCompat(monthUrl, { headers: CHESSCOM_HEADERS });
     if (!monthResponse.ok) continue;
     const monthData = await monthResponse.json();
     for (const game of Array.isArray(monthData.games) ? monthData.games : []) {
@@ -540,4 +557,161 @@ exports.handler = async (event, context = {}) => {
     }
 	    return json(err.statusCode || 500, { error: err.message || 'Anticheat analysis failed.', code: err.code, quota: err.quota, plan: err.plan });
 	  }
+};
+
+exports.streamHandler = async (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders?.();
+
+  if (_moduleLoadError) {
+    sseWrite(res, 'error', { error: `Anticheat module load failed: ${_moduleLoadError.message || String(_moduleLoadError)}` });
+    res.end();
+    return;
+  }
+
+  let quotaState = null;
+  try {
+    quotaState = await requireQuota({
+      httpMethod: req.method,
+      headers: req.headers || {},
+      body: req.body === undefined ? undefined : JSON.stringify(req.body),
+    }, 'anticheat');
+  } catch (err) {
+    sseWrite(res, 'error', {
+      error: err.message || 'Anticheat quota check failed.',
+      code: err.code,
+      quota: err.quota,
+      plan: err.plan,
+    });
+    res.end();
+    return;
+  }
+
+  let payload = {};
+  try {
+    payload = req.body && typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
+  } catch (_err) {
+    sseWrite(res, 'error', { error: 'Invalid JSON body.' });
+    res.end();
+    return;
+  }
+
+  try {
+    const pgns = await loadPgns(payload);
+    if (!pgns.length) {
+      sseWrite(res, 'error', { error: 'No games found.' });
+      res.end();
+      return;
+    }
+
+    const engine = await withTimeout(getServerEngine(), 9000, 'Server engine is still warming up.');
+    const reviewEngine = cachedEngineAdapter(engine);
+    const { MoveAnalyzer } = loadAnalyzer();
+    const analyzer = new MoveAnalyzer();
+    analyzer.setReviewProfile(ANTICHEAT_PROFILE);
+    const username = String(payload.username || '').trim();
+
+    sseWrite(res, 'status', { message: 'started', games: pgns.length });
+
+    const allMetrics = [];
+    const aggregatedGames = [];
+    let skipped = 0;
+
+    await withEngineQueue(async () => {
+      await reviewEngine.newGame();
+      for (let gameIndex = 0; gameIndex < pgns.length; gameIndex += 1) {
+        if (res.destroyed) return;
+        const pgn = pgns[gameIndex];
+        sseWrite(res, 'progress', {
+          phase: 'game',
+          gameIndex: gameIndex + 1,
+          gameTotal: pgns.length,
+          message: `Analyzing game ${gameIndex + 1}/${pgns.length}`,
+        });
+
+        try {
+          const parsed = parseGame(pgn, { full: true });
+          if (!parsed.moves.length) throw new Error('A PGN had no moves.');
+
+          const positions = analyzer._positionsForMoves(
+            parsed.moves,
+            parsed.headers.FEN || parsed.headers.Fen || parsed.headers.fen,
+          );
+          const evals = await analyzer.evaluatePositions(
+            positions,
+            reviewEngine,
+            (index, total) => {
+              if (res.destroyed) return;
+              sseWrite(res, 'progress', {
+                phase: 'positions',
+                gameIndex: gameIndex + 1,
+                gameTotal: pgns.length,
+                completed: index + 1,
+                total,
+              });
+            },
+            { newGame: false },
+          );
+
+          const results = analyzer.resultsFromEvals(
+            parsed.moves,
+            positions,
+            evals,
+            analyzer.detectOpening(parsed.moves),
+            { headers: parsed.headers, skipMateThreat: true },
+          );
+          const times = moveTimesFromPgn(parsed.pgn, parsed.moves.length, parsed.headers);
+          const targetSide = sideForUsername(parsed.headers, username);
+          const sides = targetSide ? [targetSide] : ['white', 'black'];
+
+          for (const side of sides) {
+            const metrics = sideMetrics(results, side, times, parsed.headers);
+            allMetrics.push(metrics);
+            const singleScore = scoreMetrics([metrics]);
+            aggregatedGames.push({
+              title: `${metrics.player} as ${side}`,
+              score: singleScore.score,
+              note: `Accuracy ${Math.round(metrics.accuracy)}%, ACPL ${Math.round(metrics.acpl)}, fast bests ${Math.round(metrics.fastBestRate)}%`,
+            });
+          }
+        } catch (err) {
+          skipped += 1;
+          console.warn('Anticheat stream skipped a game:', err.message);
+        }
+      }
+    });
+
+    if (!allMetrics.length) {
+      sseWrite(res, 'error', { error: 'No standard chess games could be analyzed.' });
+      res.end();
+      return;
+    }
+
+    const summary = scoreMetrics(allMetrics);
+    sseWrite(res, 'complete', {
+      summary,
+      games: aggregatedGames,
+      gamesAnalyzed: pgns.length - skipped,
+      gamesSkipped: skipped,
+      subjectsAnalyzed: allMetrics.length,
+      profile: ANTICHEAT_PROFILE,
+      quota: quotaState.quota,
+      plan: quotaState.plan,
+    });
+  } catch (err) {
+    console.error('Anticheat stream failed:', err);
+    sseWrite(res, 'error', {
+      error: err.message || 'Anticheat analysis failed.',
+      code: err.code,
+      quota: quotaState?.quota,
+      plan: quotaState?.plan,
+    });
+  } finally {
+    res.end();
+  }
 };

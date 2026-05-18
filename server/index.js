@@ -86,6 +86,7 @@ app.options('/api/*', (req, res) => {
 app.post('/api/analyze', wrapHandler(analyzeFn));
 app.post('/api/analyze/stream', analyzeFn.streamHandler);
 app.post('/api/anticheat', wrapHandler(anticheatFn));
+app.post('/api/anticheat/stream', anticheatFn.streamHandler);
 app.get('/api/puzzle', wrapHandler(getPuzzleFn));
 app.get('/api/recent-games', wrapHandler(recentGamesFn));
 app.get('/api/public-stats', wrapHandler(publicStatsFn));

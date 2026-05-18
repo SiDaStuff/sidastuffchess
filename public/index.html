@@ -38,10 +38,6 @@
 		          <span class="material-symbols-outlined btn-symbol">shield</span>
 			          <span>Anticheat</span>
 			        </button>
-		        <button id="btn-menu-boost" class="menu-button">
-		          <span class="material-symbols-outlined btn-symbol">bolt</span>
-		          <span>Boost</span>
-		        </button>
 		      </div>
 		      <div class="public-stats stats-loading" id="public-stats" aria-label="Public site stats">
 		        <div class="public-stat">
@@ -259,12 +255,15 @@
 	        </div>
 
         <div class="server-boost-toggle panel-wide" id="server-boost-toggle" hidden>
-          <label class="switch-row">
+          <label class="switch-row app-switch-row">
             <span>
               <strong>Stronger server review</strong>
               <small>Boost only. Use Stockfish 18 server review at depth 14.</small>
             </span>
-            <input id="server-strong-review" type="checkbox">
+            <span class="app-switch">
+              <input id="server-strong-review" type="checkbox" role="switch" aria-label="Stronger server review">
+              <span class="app-switch-track" aria-hidden="true"></span>
+            </span>
           </label>
         </div>
 
@@ -459,12 +458,12 @@
             <div class="anticheat-card-header">
               <div>
                 <h3>Anticheat</h3>
-                <span class="anticheat-source">Server review of games, time use, and accuracy</span>
+                <span class="anticheat-source">Server-only analysis of accuracy, time use, and suspicious patterns</span>
               </div>
               <span class="anticheat-risk-pill" id="anticheat-risk-pill">Ready</span>
             </div>
             <div class="anticheat-warning">
-              Do not close this tab while checking. Server analysis may take 2-5 minutes for 10 games.
+              <strong>Server only.</strong> Anticheat cannot run in the browser. Free accounts get 1 server run per day; Boost removes the limit. Do not close this tab while checking.
             </div>
             <div class="anticheat-form">
               <label class="field">

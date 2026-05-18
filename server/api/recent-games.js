@@ -9,6 +9,11 @@ const json = (statusCode, body) => ({
   body: JSON.stringify(body),
 });
 
+const CHESSCOM_HEADERS = {
+  Accept: 'application/json',
+  'User-Agent': 'Mozilla/5.0 (compatible; SiDaStuffChess/1.0; +https://lichess.org)',
+};
+
 function splitPgnGames(text) {
   const normalized = String(text || '').replace(/\r\n?/g, '\n').trim();
   if (!normalized) return [];
@@ -40,6 +45,16 @@ function sortRecent(games) {
   return games.slice().sort((a, b) => timestamp(b.headers || b) - timestamp(a.headers || a));
 }
 
+function chessComError(status) {
+  if (status === 403) {
+    return new Error('Chess.com blocked this request. Try again later, paste a PGN instead, or load games from your browser.');
+  }
+  if (status === 404) {
+    return new Error('Chess.com player not found. Check the username and try again.');
+  }
+  return new Error(`Chess.com responded with ${status}`);
+}
+
 async function lichessGames(username, limit) {
   const params = new URLSearchParams({
     max: String(limit),
@@ -62,16 +77,16 @@ async function lichessGames(username, limit) {
 
 async function chessComGames(username, limit) {
   const archiveResponse = await fetchCompat(`https://api.chess.com/pub/player/${encodeURIComponent(username)}/games/archives`, {
-    headers: { Accept: 'application/json' },
+    headers: CHESSCOM_HEADERS,
   });
-  if (!archiveResponse.ok) throw new Error(`Chess.com responded with ${archiveResponse.status}`);
+  if (!archiveResponse.ok) throw chessComError(archiveResponse.status);
   const archiveData = await archiveResponse.json();
   const archives = Array.isArray(archiveData.archives) ? archiveData.archives.slice().reverse() : [];
   const games = [];
 
   for (const monthUrl of archives) {
     if (games.length >= Math.max(limit, 20)) break;
-    const monthResponse = await fetchCompat(monthUrl, { headers: { Accept: 'application/json' } });
+    const monthResponse = await fetchCompat(monthUrl, { headers: CHESSCOM_HEADERS });
     if (!monthResponse.ok) continue;
     const monthData = await monthResponse.json();
     for (const game of Array.isArray(monthData.games) ? monthData.games : []) {
@@ -110,6 +125,8 @@ exports.handler = async (event) => {
     return json(200, { games: sortRecent(games).slice(0, limit) });
   } catch (err) {
     console.error('recent-games failed:', err);
-    return json(500, { error: err.message || 'Could not load recent games.' });
+    const message = err.message || 'Could not load recent games.';
+    const statusCode = message.includes('blocked') ? 503 : 500;
+    return json(statusCode, { error: message, code: statusCode === 503 ? 'upstream_blocked' : 'fetch_failed' });
   }
 };

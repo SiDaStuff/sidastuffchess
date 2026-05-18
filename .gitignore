@@ -1,0 +1,7 @@
+node_modules/
+server/data/lichess_db_puzzle.csv.zst
+server/data/lichess_db_puzzle.csv
+server/data/puzzles.db
+server/data/puzzles.db-wal
+server/data/puzzles.db-shm
+.env

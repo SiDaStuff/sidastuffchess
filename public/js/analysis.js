@@ -260,7 +260,11 @@ class BrowserMoveCoach {
 	      if (opponentReply) {
 	        statements.push(opponentReply);
 	      }
-      if (payload.bestMoveSan) {
+      const playedSan = moveInfo.san || payload.moveSan;
+      const betterIsDifferent = payload.bestMoveSan
+        && !payload.isBestMove
+        && !this.analyzer._sameMoveSan(payload.bestMoveSan, playedSan);
+      if (betterIsDifferent) {
         const plainBest = bestMoveIdea === `play ${payload.bestMoveSan}` || !bestMoveIdea;
         statements.push(plainBest
           ? `Better was ${payload.bestMoveSan}.`
@@ -325,9 +329,7 @@ class BrowserMoveCoach {
 	    const epLoss = typeof payload.expectedLoss === 'number'
 	      ? Math.round(payload.expectedLoss * 100)
 	      : null;
-	    const lossText = epLoss !== null && epLoss > 0
-	      ? `drops your expected result by about ${epLoss} percentage points`
-	      : `gives up about ${Math.round(payload.cpLoss || 0)} centipawns`;
+	    const lossText = this.analyzer._formatCpLossText(payload.cpLoss, payload.expectedLoss);
 		    const brilliantText = /[+#]/.test(move.san || san)
 		      ? 'is brilliant: a forcing check that is hard to find and keeps the attack in your hands'
 		      : 'is brilliant: the best move, tricky to find, and usually involving a sacrifice';
@@ -910,8 +912,25 @@ class MoveAnalyzer {
   }
 
   _cpLoss(bestScoreAfter, playedScoreAfter, isWhitePlaying) {
-    if (isWhitePlaying) return Math.max(0, bestScoreAfter - playedScoreAfter);
-    return Math.max(0, playedScoreAfter - bestScoreAfter);
+    const edgeBefore = isWhitePlaying ? bestScoreAfter : -bestScoreAfter;
+    const edgeAfter = isWhitePlaying ? playedScoreAfter : -playedScoreAfter;
+    const raw = Math.max(0, edgeBefore - edgeAfter);
+    return Math.min(raw, 1200);
+  }
+
+  _formatCpLossText(cpLoss, expectedLoss) {
+    if (typeof expectedLoss === 'number' && expectedLoss >= 0.12) {
+      return `drops your expected result by about ${Math.round(expectedLoss * 100)} percentage points`;
+    }
+    const cp = Math.round(cpLoss || 0);
+    if (cp >= 500) return 'severely worsens the position';
+    if (cp > 0) return `gives up about ${cp} centipawns`;
+    return 'worsens the position';
+  }
+
+  _sameMoveSan(a, b) {
+    if (!a || !b) return false;
+    return String(a).replace(/[+#]/g, '') === String(b).replace(/[+#]/g, '');
   }
 
   _gapToSecond(bestScore, secondScore, isWhitePlaying) {
@@ -1139,13 +1158,15 @@ class MoveAnalyzer {
 		      && !wasAlreadyCrushing
 		      && playerEdgeAfter >= playerEdgeBefore - 85
 		      && (isBestMove || gapToSecond >= 20 || beforeExpected <= 0.72);
-					    if (!ordinaryCaptureTrade && !opponentMateAfter && mateTrap && nearlyBest && positionAfterOk && !wasAlreadyCrushing) {
+					    if (!ordinaryCaptureTrade && !opponentMateAfter && mateTrap && isBestMove && gapToSecond >= 45 && positionAfterOk && !wasAlreadyCrushing) {
 					      return MoveClassification.BRILLIANT;
 					    }
 	
 				    if (!opponentMateAfter
 				      && !ordinaryCaptureTrade
 				      && kingPressureOffer
+				      && isBestMove
+				      && gapToSecond >= 60
 				      && nearlyBest
 			      && positionAfterOk
 			      && playerEdgeAfter >= playerEdgeBefore - 70
@@ -1154,7 +1175,8 @@ class MoveAnalyzer {
 			    }
 
 		    if (drawResource
-		      && nearlyBest
+		      && isBestMove
+		      && gapToSecond >= 50
 		      && !opponentMateAfter
 		      && positionAfterOk
 		      && !wasAlreadyCrushing
@@ -1163,8 +1185,9 @@ class MoveAnalyzer {
 		    }
 
 		    const rareBestSacrifice = goodPieceSacrifice
+		      && isBestMove
 		      && nearlyBest
-		      && gapToSecond >= 70
+		      && gapToSecond >= 110
 		      && !ordinaryCaptureTrade
 		      && playerEdgeAfter >= playerEdgeBefore - 20
 	      && positionAfterOk
@@ -1175,7 +1198,7 @@ class MoveAnalyzer {
 	      return MoveClassification.BRILLIANT;
 	    }
 
-	    if (bestAttackingOffer) {
+	    if (bestAttackingOffer && isBestMove && gapToSecond >= 55) {
 	      return MoveClassification.BRILLIANT;
 	    }
 
@@ -1192,6 +1215,7 @@ class MoveAnalyzer {
 	    }
 
 		    if (opponentMateAfter) {
+		      if (isBestMove) return MoveClassification.MISTAKE;
 		      return cpLoss >= 120 || playerEdgeAfter <= -9000
 		        ? MoveClassification.BLUNDER
 		        : MoveClassification.MISTAKE;
@@ -1227,7 +1251,10 @@ class MoveAnalyzer {
 			    if (expectedLoss > 0.20 * tolerance || effectiveCpLoss >= 320 * tolerance) {
 			      return (losingOnOpponentMove && losesMaterialOrGame) ? MoveClassification.BLUNDER : MoveClassification.MISTAKE;
 			    }
-			    if (losesMaterialOrGame && (expectedLoss > 0.14 * tolerance || effectiveCpLoss >= 220 * tolerance)) return MoveClassification.BLUNDER;
+			    if (losesMaterialOrGame && (expectedLoss > 0.14 * tolerance || effectiveCpLoss >= 220 * tolerance)) {
+			      if (isBestMove) return expectedLoss > 0.18 * tolerance ? MoveClassification.MISTAKE : MoveClassification.INACCURACY;
+			      return MoveClassification.BLUNDER;
+			    }
 		    if (expectedLoss > 0.10 * tolerance || effectiveCpLoss >= 155 * tolerance) return MoveClassification.MISTAKE;
 	    if (expectedLoss > 0.05 * tolerance || effectiveCpLoss >= 70 * tolerance) return MoveClassification.INACCURACY;
 
@@ -1237,11 +1264,14 @@ class MoveAnalyzer {
 
 			    if (!ordinaryCaptureTrade
 			      && goodPieceSacrifice
+			      && isBestMove
+			      && gapToSecond >= 90
 			      && nearlyBest
 		      && !opponentMateAfter
 	      && positionAfterOk
 	      && !wasAlreadyCrushing
-	      && (uniqueBest || (wasCloseGame && stillClose))) {
+	      && uniqueBest
+	      && wasCloseGame && stillClose) {
 	      return MoveClassification.BRILLIANT;
 	    }
 	
@@ -1803,12 +1833,12 @@ class MoveAnalyzer {
 	    }
 		    if (key === 'MISTAKE') {
 		      if (punishText) {
-		        return `${moveSan} is a mistake because ${punishText}. ${bestMoveSan || 'The best move'} was needed here.`;
+		        const alt = bestMoveSan && !this._sameMoveSan(bestMoveSan, moveSan) ? ` ${bestMoveSan} was needed here.` : '';
+		        return `${moveSan} is a mistake because ${punishText}.${alt}`;
 		      }
-	      const lossText = typeof expectedLoss === 'number' && expectedLoss > 0
-	        ? `changes the expected result by about ${Math.round(expectedLoss * 100)} percentage points`
-	        : `gives up around ${Math.round(cpLoss)} cp`;
-	      return `${moveSan} ${lossText}. ${bestMoveSan || 'Best move'} was needed.`;
+	      const lossText = this._formatCpLossText(cpLoss, expectedLoss);
+	      const alt = bestMoveSan && !this._sameMoveSan(bestMoveSan, moveSan) ? ` ${bestMoveSan} was needed.` : '';
+	      return `${moveSan} is a mistake and ${lossText}.${alt}`;
     }
     if (key === 'MISS') {
       if (opponentJustBlundered) {
@@ -1823,12 +1853,12 @@ class MoveAnalyzer {
       return `${moveSan} is a miss. ${bestMoveSan || 'The best move'} would have kept the winning chances alive.`;
     }
 		    if (punishText) {
-		      return `${moveSan} is a blunder because ${punishText}. ${bestMoveSan || 'Best move'} was critical here.`;
+		      const alt = bestMoveSan && !this._sameMoveSan(bestMoveSan, moveSan) ? ` ${bestMoveSan} was critical here.` : '';
+		      return `${moveSan} is a blunder because ${punishText}.${alt}`;
 		    }
-	    const lossText = typeof expectedLoss === 'number' && expectedLoss > 0
-	      ? `changes the expected result by about ${Math.round(expectedLoss * 100)} percentage points`
-	      : `drops about ${Math.round(cpLoss)} cp`;
-	    return `${moveSan} is a blunder and ${lossText}. ${bestMoveSan || 'Best move'} was critical here.`;
+	    const lossText = this._formatCpLossText(cpLoss, expectedLoss);
+	    const alt = bestMoveSan && !this._sameMoveSan(bestMoveSan, moveSan) ? ` ${bestMoveSan} was critical here.` : '';
+	    return `${moveSan} is a blunder and ${lossText}.${alt}`;
 	  }
 
   _lineToSan(fen, pvUci, maxPlies = 6) {
@@ -2088,6 +2118,8 @@ class MoveAnalyzer {
         coachText: this._coachingText({
           classification,
           cpLoss,
+          expectedLoss,
+          isBestMove,
           bestMoveSan,
           bestMove: evals[i].bestMove,
           opponentBestMove,

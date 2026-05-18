@@ -348,12 +348,19 @@ class ChessReviewApp {
 			      confirmButtonText: options.confirmButtonText || 'OK',
 			      showCancelButton: !!options.showCancelButton,
 			      cancelButtonText: options.cancelButtonText || 'Cancel',
+			      showDenyButton: !!options.showDenyButton,
+			      denyButtonText: options.denyButtonText || 'No',
+			      denyButtonColor: options.denyButtonColor || '#7c3aed',
 			      reverseButtons: options.reverseButtons ?? true,
 			      allowOutsideClick: options.allowOutsideClick ?? true,
+			      focusConfirm: options.focusConfirm ?? true,
+			      preConfirm: options.preConfirm,
+			      didOpen: options.didOpen,
 			      customClass: {
-			        popup: 'app-popup',
+			        popup: `app-popup ${options.form ? 'app-popup-form' : ''}`.trim(),
 			        confirmButton: 'app-popup-confirm',
 			        cancelButton: 'app-popup-cancel',
+			        denyButton: 'app-popup-deny',
 			      },
 			    };
 
@@ -416,8 +423,24 @@ class ChessReviewApp {
 		      return;
 		    }
 
-		    if (route === '/account' || route === '/settings') {
+		    if (route === '/boost') {
+		      this._hideSettingsModal();
+		      this._hideAccountModal();
+		      this._enterBoostPage();
+		      document.title = 'Boost | SiDaStuff Chess';
+		      return;
+		    }
+
+		    if (route === '/account') {
+		      this._showAccountModal();
 		      window.history.replaceState({}, '', '/index');
+		      return;
+		    }
+
+		    if (route === '/settings') {
+		      this._showSettingsModal();
+		      window.history.replaceState({}, '', '/index');
+		      return;
 		    }
 
 		    this._hideSettingsModal();
@@ -655,28 +678,23 @@ class ChessReviewApp {
 		    const isReview = kind === 'serverReviews';
 		    const title = isReview ? 'You are out of server reviews!' : 'You are out of server anticheat runs!';
 		    const text = isReview
-		      ? 'Do you want to review in browser or buy Boost?'
-		      : 'Do you want to run anticheat in browser or buy Boost?';
-		    if (window.Swal?.fire) {
-		      const result = await window.Swal.fire({
-		        icon: 'warning',
-		        title,
-		        text,
-		        confirmButtonText: isReview ? 'Review in browser' : 'Run in browser',
-		        denyButtonText: 'Buy Boost',
-		        cancelButtonText: 'Cancel',
-		        showDenyButton: true,
-		        showCancelButton: true,
-		        confirmButtonColor: '#202721',
-		        denyButtonColor: '#7c3aed',
-		      });
-		      if (result.isDenied) {
-		        this._navigateTo('/boost');
-		        return 'boost';
-		      }
-		      return result.isConfirmed ? 'browser' : 'cancel';
+		      ? 'Review in the browser, or buy Boost for unlimited server reviews.'
+		      : 'Anticheat only runs on the server. Buy Boost for unlimited runs, or wait for the daily reset.';
+		    const result = await this._showPopup({
+		      icon: 'warning',
+		      title,
+		      text,
+		      confirmButtonText: isReview ? 'Review in browser' : 'OK',
+		      denyButtonText: 'Buy Boost',
+		      showDenyButton: true,
+		      showCancelButton: true,
+		      cancelButtonText: 'Cancel',
+		    });
+		    if (result.isDenied) {
+		      this._navigateTo('/boost');
+		      return 'boost';
 		    }
-		    return window.confirm(`${title}\n${text}`) ? 'browser' : 'cancel';
+		    return isReview && result.isConfirmed ? 'browser' : 'cancel';
 		  }
 
 	  async _saveUserProfile(profile = this.authState.profile) {
@@ -826,24 +844,167 @@ class ChessReviewApp {
 	    this._setAccountStatus('');
 	  }
 
-		  _showAccountModal() {
+		  _accountSwalHtml() {
+		    this._syncAccountUi();
 		    const user = this.authState.user;
-		    // If already logged in, just show the account info (don't show login form)
-		    if (user) {
-		      this._setAccountStatus('');
-		      this._syncAccountUi();
-		      if (this.elAccountModal) this.elAccountModal.style.display = 'flex';
-		    } else {
-	      // Not logged in, show login/signup form
-	      this._setAuthMode(this.authMode || 'signin');
-	      this._syncAccountUi();
-	      if (this.elAccountModal) this.elAccountModal.style.display = 'flex';
-	    }
-	  }
+		    if (!user) {
+		      const showUsername = this.authMode === 'signup';
+		      return `
+	        <div class="swal-form-grid">
+	          <div class="account-mode-switch" role="group">
+	            <button type="button" class="account-mode ${this.authMode === 'signin' ? 'active' : ''}" data-auth-mode="signin">Sign In</button>
+	            <button type="button" class="account-mode ${this.authMode === 'signup' ? 'active' : ''}" data-auth-mode="signup">Sign Up</button>
+	          </div>
+	          <label class="field" ${showUsername ? '' : 'hidden'} id="swal-auth-username-field">
+	            <span class="field-label">Username</span>
+	            <input id="swal-auth-username" class="input-select" type="text" autocomplete="username" placeholder="Your chess name">
+	          </label>
+	          <label class="field">
+	            <span class="field-label">Email</span>
+	            <input id="swal-auth-email" class="input-select" type="email" autocomplete="email" placeholder="you@example.com">
+	          </label>
+	          <label class="field">
+	            <span class="field-label">Password</span>
+	            <input id="swal-auth-password" class="input-select" type="password" autocomplete="current-password" placeholder="At least 6 characters">
+	          </label>
+	          <p class="account-status" id="swal-account-status"></p>
+	        </div>`;
+		    }
 
-	  _hideAccountModal() {
-	    if (this.elAccountModal) this.elAccountModal.style.display = 'none';
-	  }
+		    const profile = this.authState.profile || {};
+		    const plan = this.authState.plan || { name: 'Free', plan: 'free' };
+		    const usage = this.authState.usage || {};
+		    const limits = this.authState.limits || {};
+		    const expires = plan.expiresAt ? ` until ${new Date(plan.expiresAt).toLocaleDateString()}` : '';
+		    const usageText = plan.plan === 'boost'
+		      ? 'Boost includes unlimited server reviews and anticheat runs.'
+		      : `Today: ${Math.max(0, Number(usage.anticheat) || 0)}/${limits.anticheatRunsPerDay || 1} anticheat, ${Math.max(0, Number(usage.serverReviews) || 0)}/${limits.serverReviewsPerDay || 3} server reviews.`;
+		    const adminHtml = this.authState.isAdmin ? `
+	          <div class="admin-boost-panel">
+	            <h3>Gift Boost</h3>
+	            <label class="field">
+	              <span class="field-label">Email</span>
+	              <input id="swal-gift-boost-email" class="input-select" type="email" placeholder="player@example.com">
+	            </label>
+	            <label class="field">
+	              <span class="field-label">Days</span>
+	              <input id="swal-gift-boost-days" class="input-select" type="number" min="1" max="366" value="30">
+	            </label>
+	            <p class="account-status" id="swal-gift-boost-status"></p>
+	            <button type="button" class="btn btn-primary" id="swal-gift-boost-btn">Gift Boost</button>
+	          </div>` : '';
+		    return `
+	      <div class="account-profile">
+	        <span class="account-avatar material-symbols-outlined" aria-hidden="true">person</span>
+	        <div>
+	          <strong>${this._escapeHtml(profile.username || user.displayName || 'Player')}</strong>
+	          <span>${this._escapeHtml(user.email || profile.email || '')}</span>
+	        </div>
+	      </div>
+	      <div class="account-stats-grid">
+	        <div><span>Plan</span><strong>${this._escapeHtml(`${plan.name || 'Free'}${expires}`)}</strong></div>
+	        <div><span>Puzzle rating</span><strong>${Math.round(Number(profile.puzzleRating) || this.puzzleMode.rating || 1500)}</strong></div>
+	        <div><span>Solved</span><strong>${Math.max(0, Number(profile.puzzleStats?.solved) || 0)}</strong></div>
+	        <div><span>Attempted</span><strong>${Math.max(0, Number(profile.puzzleStats?.attempted) || 0)}</strong></div>
+	      </div>
+	      <p class="account-usage">${this._escapeHtml(usageText)}</p>
+	      ${adminHtml}`;
+		  }
+
+		  async _showAccountModal() {
+		    const signedIn = !!this.authState.user;
+		    const result = await this._showPopup({
+		      form: true,
+		      title: 'Account',
+		      html: this._accountSwalHtml(),
+		      showCancelButton: true,
+		      cancelButtonText: signedIn ? 'Close' : 'Cancel',
+		      confirmButtonText: signedIn ? 'Sign Out' : (this.authMode === 'signup' ? 'Sign Up' : 'Sign In'),
+		      showDenyButton: !signedIn,
+		      denyButtonText: 'Google',
+		      didOpen: () => {
+		        const root = window.Swal?.getHtmlContainer?.();
+		        if (!root) return;
+		        root.querySelector('#swal-gift-boost-btn')?.addEventListener('click', () => {
+		          this._giftBoostFromSwal(root);
+		        });
+		        root.querySelectorAll('[data-auth-mode]').forEach((button) => {
+		          button.addEventListener('click', () => {
+		            this._setAuthMode(button.dataset.authMode);
+		            const usernameField = root.querySelector('#swal-auth-username-field');
+		            if (usernameField) usernameField.hidden = this.authMode !== 'signup';
+		            root.querySelectorAll('[data-auth-mode]').forEach((entry) => {
+		              entry.classList.toggle('active', entry.dataset.authMode === this.authMode);
+		            });
+		          });
+		        });
+		      },
+		      preConfirm: async () => {
+		        if (this.authState.user) {
+		          return true;
+		        }
+		        const root = window.Swal.getHtmlContainer();
+		        const email = (root.querySelector('#swal-auth-email')?.value || '').trim();
+		        const password = root.querySelector('#swal-auth-password')?.value || '';
+		        const username = (root.querySelector('#swal-auth-username')?.value || '').trim();
+		        const statusEl = root.querySelector('#swal-account-status');
+		        if (!email || !password || (this.authMode === 'signup' && !username)) {
+		          if (statusEl) {
+		            statusEl.textContent = 'Fill in the required account fields.';
+		            statusEl.className = 'account-status error';
+		          }
+		          return false;
+		        }
+		        try {
+		          await this._handleEmailAuth({ email, password, username, statusEl });
+		          return true;
+		        } catch (err) {
+		          if (statusEl) {
+		            statusEl.textContent = err.message || 'Authentication failed.';
+		            statusEl.className = 'account-status error';
+		          }
+		          return false;
+		        }
+		      },
+		    });
+		    if (signedIn && result.isConfirmed) {
+		      await this._handleSignOut();
+		    } else if (!signedIn && result.isDenied) {
+		      await this._handleGoogleAuth();
+		    }
+		  }
+
+		  _hideAccountModal() {
+		    if (window.Swal?.isVisible?.()) window.Swal.close();
+		  }
+
+		  async _giftBoostFromSwal(root) {
+		    const email = (root.querySelector('#swal-gift-boost-email')?.value || '').trim();
+		    const days = Math.max(1, Math.min(parseInt(root.querySelector('#swal-gift-boost-days')?.value || '30', 10) || 30, 366));
+		    const statusEl = root.querySelector('#swal-gift-boost-status');
+		    if (!email) {
+		      if (statusEl) statusEl.textContent = 'Enter an email to gift Boost.';
+		      return;
+		    }
+		    try {
+		      const response = await fetch('/api/admin/gift-boost', {
+		        method: 'POST',
+		        headers: await this._authHeaders({ 'Content-Type': 'application/json' }),
+		        body: JSON.stringify({ email, days }),
+		      });
+		      const data = await response.json().catch(() => ({}));
+		      if (!response.ok) throw new Error(data.error || 'Gift failed.');
+		      if (statusEl) {
+		        statusEl.textContent = `Boost gifted to ${email} for ${days} days.`;
+		        statusEl.className = 'account-status success';
+		      }
+		    } catch (err) {
+		      if (statusEl) {
+		        statusEl.textContent = err.message || 'Gift failed.';
+		        statusEl.className = 'account-status error';
+		      }
+		    }
+		  }
 
 	  _setAccountStatus(message, kind = '') {
 	    if (!this.elAccountStatus) return;
@@ -851,21 +1012,38 @@ class ChessReviewApp {
 	    this.elAccountStatus.className = `account-status ${kind}`.trim();
 	  }
 
-	  async _handleEmailAuth() {
+	  async _handleEmailAuth(fields = null) {
 	    const firebase = this._ensureFirebase();
 	    if (!firebase?.auth) {
-	      this._setAccountStatus('Firebase auth is unavailable.', 'error');
-	      return;
+	      const message = 'Firebase auth is unavailable.';
+	      if (fields?.statusEl) {
+	        fields.statusEl.textContent = message;
+	        fields.statusEl.className = 'account-status error';
+	      } else {
+	        this._setAccountStatus(message, 'error');
+	      }
+	      throw new Error(message);
 	    }
-	    const email = (this.elAuthEmail?.value || '').trim();
-	    const password = this.elAuthPassword?.value || '';
-	    const username = (this.elAuthUsername?.value || '').trim();
+	    const email = (fields?.email || this.elAuthEmail?.value || '').trim();
+	    const password = fields?.password || this.elAuthPassword?.value || '';
+	    const username = (fields?.username || this.elAuthUsername?.value || '').trim();
 	    if (!email || !password || (this.authMode === 'signup' && !username)) {
-	      this._setAccountStatus('Fill in the required account fields.', 'error');
-	      return;
+	      const message = 'Fill in the required account fields.';
+	      if (fields?.statusEl) {
+	        fields.statusEl.textContent = message;
+	        fields.statusEl.className = 'account-status error';
+	      } else {
+	        this._setAccountStatus(message, 'error');
+	      }
+	      throw new Error(message);
 	    }
 
-	    this._setAccountStatus('Working...');
+	    if (fields?.statusEl) {
+	      fields.statusEl.textContent = 'Working...';
+	      fields.statusEl.className = 'account-status';
+	    } else {
+	      this._setAccountStatus('Working...');
+	    }
 	    try {
 	      let credential;
 	      if (this.authMode === 'signup') {
@@ -886,10 +1064,21 @@ class ChessReviewApp {
 	      } else {
 	        credential = await firebase.auth().signInWithEmailAndPassword(email, password);
 	      }
-	      this._setAccountStatus('Signed in.', 'success');
+	      if (fields?.statusEl) {
+	        fields.statusEl.textContent = 'Signed in.';
+	        fields.statusEl.className = 'account-status success';
+	      } else {
+	        this._setAccountStatus('Signed in.', 'success');
+	      }
 	      setTimeout(() => this._hideAccountModal(), 450);
 	    } catch (err) {
-	      this._setAccountStatus(err.message || 'Authentication failed.', 'error');
+	      if (fields?.statusEl) {
+	        fields.statusEl.textContent = err.message || 'Authentication failed.';
+	        fields.statusEl.className = 'account-status error';
+	      } else {
+	        this._setAccountStatus(err.message || 'Authentication failed.', 'error');
+	      }
+	      throw err;
 	    }
 	  }
 
@@ -1092,7 +1281,6 @@ class ChessReviewApp {
 	    this.elBtnMenuCoach?.addEventListener('click', () => this._navigateTo('/coach'));
 	    this.elBtnMenuPuzzles?.addEventListener('click', () => this._navigateTo('/puzzles'));
 	    this.elBtnMenuAnticheat?.addEventListener('click', () => this._navigateTo('/anticheat'));
-	    this.elBtnMenuBoost?.addEventListener('click', () => this._navigateTo('/boost'));
     this.elBtnBackMenu?.addEventListener('click', () => this._navigateTo('/index'));
     this.elEngineChoiceClose?.addEventListener('click', () => this._hideEngineChoiceModal());
     this.elEngineChoiceModal?.addEventListener('click', (e) => {
@@ -1689,13 +1877,83 @@ class ChessReviewApp {
     this.elPgnModal.style.display = 'none';
   }
 
-  _showSettingsModal() {
+  _settingsSwalHtml() {
+    const modules = getEngineModules(this.engineSettings.source);
+    const moduleOptions = modules.map((entry) => `
+      <option value="${entry.key}" ${entry.key === this.engineSettings.module ? 'selected' : ''}>${this._escapeHtml(entry.label)}</option>
+    `).join('');
+    return `
+      <div class="swal-form-grid">
+        <label class="field">
+          <span class="field-label">Engine Model</span>
+          <select id="swal-engine-module" class="input-select">${moduleOptions}</select>
+        </label>
+        <label class="field">
+          <span class="field-label">Analysis Depth</span>
+          <select id="swal-engine-strength" class="input-select">
+            <option value="depth10" ${this.engineSettings.strength === 'depth10' ? 'selected' : ''}>Depth 10</option>
+            <option value="depth14" ${this.engineSettings.strength === 'depth14' ? 'selected' : ''}>Depth 14</option>
+            <option value="depth18" ${this.engineSettings.strength === 'depth18' ? 'selected' : ''}>Depth 18</option>
+            <option value="depth22" ${this.engineSettings.strength === 'depth22' ? 'selected' : ''}>Depth 22</option>
+            <option value="depth26" ${this.engineSettings.strength === 'depth26' ? 'selected' : ''}>Depth 26</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Maximum Time</span>
+          <select id="swal-engine-max-time" class="input-select">
+            <option value="4000" ${String(this.engineSettings.maxTimeMs) === '4000' ? 'selected' : ''}>4 seconds</option>
+            <option value="8000" ${String(this.engineSettings.maxTimeMs) === '8000' ? 'selected' : ''}>8 seconds</option>
+            <option value="12000" ${String(this.engineSettings.maxTimeMs) === '12000' ? 'selected' : ''}>12 seconds</option>
+            <option value="20000" ${String(this.engineSettings.maxTimeMs) === '20000' ? 'selected' : ''}>20 seconds</option>
+            <option value="30000" ${String(this.engineSettings.maxTimeMs) === '30000' ? 'selected' : ''}>30 seconds</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Review Location</span>
+          <select id="swal-analysis-location" class="input-select">
+            <option value="browser" ${this.engineSettings.analysisLocation === 'browser' ? 'selected' : ''}>Browser</option>
+            <option value="server" ${this.engineSettings.analysisLocation === 'server' ? 'selected' : ''}>Server</option>
+          </select>
+        </label>
+        <p class="modal-help">These settings apply to browser review, coach, live eval, and local engine use.</p>
+      </div>`;
+  }
+
+  async _showSettingsModal() {
+    const result = await this._showPopup({
+      form: true,
+      title: 'Engine Settings',
+      html: this._settingsSwalHtml(),
+      showCancelButton: true,
+      cancelButtonText: 'Cancel',
+      confirmButtonText: 'Save',
+      preConfirm: () => {
+        const root = window.Swal.getHtmlContainer();
+        return {
+          module: root.querySelector('#swal-engine-module')?.value,
+          strength: root.querySelector('#swal-engine-strength')?.value,
+          maxTimeMs: Number(root.querySelector('#swal-engine-max-time')?.value || 12000),
+          analysisLocation: root.querySelector('#swal-analysis-location')?.value || 'browser',
+        };
+      },
+    });
+    if (!result.isConfirmed || !result.value) return;
+    const previousModule = this.engineSettings.module;
+    this.engineSettings.module = result.value.module || this.engineSettings.module;
+    this.engineSettings.strength = result.value.strength || this.engineSettings.strength;
+    this.engineSettings.maxTimeMs = result.value.maxTimeMs;
+    this.engineSettings.analysisLocation = result.value.analysisLocation;
     this._syncSettingsModal();
-    this.elSettingsModal.style.display = 'flex';
+    this._syncServerStrongToggle();
+    this._renderIdleEngineInfo();
+    if (previousModule !== this.engineSettings.module) {
+      this.failedBrowserModules.clear();
+      await this._initEngine();
+    }
   }
 
   _hideSettingsModal() {
-    this.elSettingsModal.style.display = 'none';
+    if (window.Swal?.isVisible?.()) window.Swal.close();
   }
 
 	  _recommendedEngineModule() {
@@ -1742,9 +2000,9 @@ class ChessReviewApp {
     this._continueAfterEngineChoice(nextAction);
   }
 
-  _continueAfterEngineChoice(nextAction) {
+  async _continueAfterEngineChoice(nextAction) {
     if (nextAction === 'coach') {
-      this._showCoachSetupModal();
+      await this._showCoachSetupModal();
       return;
     }
 
@@ -1752,29 +2010,67 @@ class ChessReviewApp {
     this._showPgnModal();
   }
 
-  _showCoachSetupModal() {
-    if (!this.elCoachSetupModal) {
-      this._enterCoachMode({
-	        elo: 1200,
-	        humanColor: 'w',
-	        aiAdjust: true,
-	        adjustStyle: 'better',
-	      });
-      return;
-    }
-
-    if (this.elCoachSetupElo) this.elCoachSetupElo.value = String(this.coachMode.elo || 1200);
+  async _showCoachSetupModal() {
+    const elo = this.coachMode.elo || 1200;
     const color = this.coachMode.humanColor || 'w';
-    const radio = this.elCoachSetupModal.querySelector(`input[name="coach-setup-color"][value="${color}"]`);
-	    if (radio) radio.checked = true;
-	    if (this.elCoachSetupAiAdjust) this.elCoachSetupAiAdjust.checked = this.coachMode.aiAdjust !== false;
-	    if (this.elCoachSetupAdjustStyle) {
-	      this.elCoachSetupAdjustStyle.value = this.coachMode.adjustStyle || 'better';
-	      this.elCoachSetupAdjustStyle.disabled = this.elCoachSetupAiAdjust?.checked === false;
-	    }
-	    this.elCoachSetupModal.style.display = 'flex';
-	    this.elCoachSetupElo?.focus();
-	  }
+    const aiAdjust = this.coachMode.aiAdjust !== false;
+    const adjustStyle = this.coachMode.adjustStyle || 'better';
+    const result = await this._showPopup({
+      form: true,
+      title: 'Play Coach',
+      html: `
+        <div class="swal-form-grid">
+          <label class="field">
+            <span class="field-label">Coach ELO</span>
+            <input id="swal-coach-elo" class="input-select" type="number" min="100" max="2800" step="50" value="${elo}">
+          </label>
+          <label class="checkbox-row coach-adjust-toggle">
+            <input id="swal-coach-ai-adjust" type="checkbox" ${aiAdjust ? 'checked' : ''}>
+            <span>AI Adjust</span>
+          </label>
+          <label class="field">
+            <span class="field-label">Coach Target</span>
+            <select id="swal-coach-adjust-style" class="input-select" ${aiAdjust ? '' : 'disabled'}>
+              <option value="better" ${adjustStyle === 'better' ? 'selected' : ''}>Better than player</option>
+              <option value="worse" ${adjustStyle === 'worse' ? 'selected' : ''}>Worse than player</option>
+            </select>
+          </label>
+          <div class="coach-color-grid" role="radiogroup" aria-label="Play as">
+            <label class="radio-card"><input type="radio" name="swal-coach-color" value="w" ${color === 'w' ? 'checked' : ''}><span>White</span></label>
+            <label class="radio-card"><input type="radio" name="swal-coach-color" value="b" ${color === 'b' ? 'checked' : ''}><span>Black</span></label>
+            <label class="radio-card"><input type="radio" name="swal-coach-color" value="random" ${color === 'random' ? 'checked' : ''}><span>Random</span></label>
+          </div>
+        </div>`,
+      showCancelButton: true,
+      cancelButtonText: 'Cancel',
+      confirmButtonText: 'Start Coach',
+      didOpen: () => {
+        const root = window.Swal?.getHtmlContainer?.();
+        const adjustToggle = root?.querySelector('#swal-coach-ai-adjust');
+        const adjustStyleSelect = root?.querySelector('#swal-coach-adjust-style');
+        adjustToggle?.addEventListener('change', () => {
+          if (adjustStyleSelect) adjustStyleSelect.disabled = !adjustToggle.checked;
+        });
+      },
+      preConfirm: () => {
+        const root = window.Swal.getHtmlContainer();
+        const rawElo = parseInt(root.querySelector('#swal-coach-elo')?.value || '1200', 10);
+        const eloValue = clamp(Number.isFinite(rawElo) ? rawElo : 1200, 100, 2800);
+        const colorChoice = root.querySelector('input[name="swal-coach-color"]:checked')?.value || 'w';
+        const humanColor = colorChoice === 'random'
+          ? (Math.random() < 0.5 ? 'w' : 'b')
+          : colorChoice;
+        return {
+          elo: eloValue,
+          humanColor,
+          aiAdjust: root.querySelector('#swal-coach-ai-adjust')?.checked !== false,
+          adjustStyle: root.querySelector('#swal-coach-adjust-style')?.value === 'worse' ? 'worse' : 'better',
+        };
+      },
+    });
+    if (!result.isConfirmed || !result.value) return;
+    this._enterCoachMode(result.value);
+  }
 
 	  _clearReviewExtras() {
 	    if (this.elReviewNarrative) this.elReviewNarrative.innerHTML = '';
@@ -1784,7 +2080,7 @@ class ChessReviewApp {
 	  }
 
   _hideCoachSetupModal() {
-    if (this.elCoachSetupModal) this.elCoachSetupModal.style.display = 'none';
+    if (window.Swal?.isVisible?.()) window.Swal.close();
   }
 
   _readCoachSetup() {
@@ -1830,13 +2126,6 @@ class ChessReviewApp {
 			      return;
 			    }
 
-			    if (route === '/boost') {
-			      this._hideSettingsModal();
-			      this._hideAccountModal();
-			      this._enterBoostPage();
-			      document.title = 'Boost | SiDaStuff Chess';
-			      return;
-			    }
 			    const rating = Math.round(Number(this.puzzleMode.rating) || 1500);
 		    this._setPuzzleStatus(this.puzzleMode.current ? 'Continue the current puzzle.' : `Loading a ${rating}-rated puzzle...`, this.puzzleMode.current ? '' : 'loading');
 		    this._syncActionButtons();
@@ -1894,7 +2183,13 @@ class ChessReviewApp {
 		          cache: 'no-store',
 		        });
 		      const loaded = await response.json().catch(() => null);
-		      if (!response.ok) throw new Error(loaded?.error || `Puzzle API responded with ${response.status}`);
+		      if (!response.ok) {
+	        const code = loaded?.code;
+	        if (response.status === 503 && code === 'puzzle_db_missing') {
+	          throw new Error('Puzzle database is not built on the server yet. Run npm run build there.');
+	        }
+	        throw new Error(loaded?.error || `Puzzle API responded with ${response.status}`);
+	      }
 		      return loaded;
 		    });
 		  }
@@ -1923,7 +2218,13 @@ class ChessReviewApp {
 		          cache: 'no-store',
 		        });
 		      const loaded = await response.json().catch(() => null);
-		      if (!response.ok) throw new Error(loaded?.error || `Puzzle API responded with ${response.status}`);
+		      if (!response.ok) {
+	        const code = loaded?.code;
+	        if (response.status === 503 && code === 'puzzle_db_missing') {
+	          throw new Error('Puzzle database is not built on the server yet. Run npm run build there.');
+	        }
+	        throw new Error(loaded?.error || `Puzzle API responded with ${response.status}`);
+	      }
 		      if (loaded?.data?.puzzle?.id === excludeId) throw new Error('That puzzle was already on the board. Try again.');
 		      return loaded;
 		    }, { target });
@@ -1942,7 +2243,11 @@ class ChessReviewApp {
 	    } catch (err) {
 	      console.error('Puzzle load failed:', err);
 	      if (token !== this.puzzleMode.requestToken) return;
-	      this._setPuzzleStatus(`Could not load a puzzle: ${err.message}`, 'error');
+	      const message = String(err.message || '');
+	      const friendly = message.toLowerCase().includes('too many requests') || message.toLowerCase().includes('busy')
+	        ? 'Puzzle servers are busy. Wait a few seconds and try again.'
+	        : message;
+	      this._setPuzzleStatus(`Could not load a puzzle: ${friendly}`, 'error');
 	    } finally {
 	      if (token === this.puzzleMode.requestToken) {
 	        this.puzzleMode.loading = false;
@@ -3053,20 +3358,8 @@ class ChessReviewApp {
 		    await this._refreshUsageBeforeAction();
 		    if (this._isOutOfUsage('anticheat')) {
 		      const choice = await this._showUsageLimitPopup('anticheat');
-		      if (choice !== 'browser') {
-		        this._setAnticheatStatus('Server anticheat limit reached. Buy Boost or wait for the daily reset.', 'error');
-		        return;
-		      }
-		      this._setAnticheatChecking(true);
-		      try {
-		        const browserResult = await this._runAnticheatInBrowser({ source, username, pgn, limit });
-		        this.anticheatMode.results = browserResult;
-		        this._renderAnticheatResults(browserResult);
-		        this._setAnticheatStatus(`Server limit reached. Checked ${browserResult.gamesAnalyzed || 0} game${browserResult.gamesAnalyzed === 1 ? '' : 's'} in the browser.`, 'success');
-		      } catch (err) {
-		        this._setAnticheatStatus(err.message || 'Browser anticheat failed.', 'error');
-		      } finally {
-		        this._setAnticheatChecking(false);
+		      if (choice !== 'boost') {
+		        this._setAnticheatStatus('Server anticheat limit reached. Anticheat cannot run in the browser. Buy Boost or wait for the daily reset.', 'error');
 		      }
 		      return;
 		    }
@@ -3080,142 +3373,19 @@ class ChessReviewApp {
 	    }
 
 			try {
-				if (source === 'pgn') {
-					const games = this._splitPgnGames(pgn).slice(0, limit);
-					const aggregatedGames = [];
-					const allMetrics = [];
-					let skipped = 0;
-					let data = null;
-					let serverResults = [];
-					try {
-						const response = await fetch('/api/anticheat', {
-							method: 'POST',
-							headers: await this._authHeaders({ 'Content-Type': 'application/json' }),
-							cache: 'no-store',
-							body: JSON.stringify({ source: 'pgn', pgn: games.join('\n\n'), limit: games.length, mode: 'engine' }),
-							});
-							data = await response.json().catch(() => null);
-							if (!response.ok) {
-							  const error = new Error(data?.error || `Anticheat responded with ${response.status}`);
-							  error.code = data?.code;
-							  throw error;
-							}
-							serverResults = data.results || [];
-					} catch (err) {
-						throw err;
-					}
-	
-					for (let gi = 0; gi < serverResults.length; gi += 1) {
-						const res = serverResults[gi];
-						this._setAnticheatStatus(`Scoring game ${gi + 1}/${serverResults.length}...`, 'loading');
-						try {
-								try {
-								const positions = res.positions || [];
-								const moves = res.moves || [];
-								const headers = res.headers || {};
-
-								// Convert engine evals into analyzer-style evals
-								const evals = (res.evals || []).map((engineEval, idx) => {
-									const fen = positions[idx] || '';
-									const isWhiteToMove = fen.split(' ')[1] === 'w';
-									const lines = (engineEval.lines || []).map((line) => {
-										const cp = this.analyzer.normalizeScore(line.score || 0, line.scoreType || 'cp', isWhiteToMove);
-										const pv = line.pv || '';
-										const move = pv.split(/\s+/).filter(Boolean)[0] || '';
-										return {
-											cp,
-											move,
-											pvUci: pv,
-											pvSan: this.analyzer._lineToSan(fen, pv, 8),
-											depth: line.depth || 0,
-										};
-									}).filter((l) => !!l.move);
-
-									const best = lines[0] || { cp: 0, move: '', pvUci: '', pvSan: '', depth: 0 };
-									return {
-										cp: best.cp,
-										bestMove: best.move,
-										pv: best.pvUci,
-										pvSan: best.pvSan,
-										depth: best.depth,
-										lines,
-									};
-								});
-
-								const results = this.analyzer.resultsFromEvals(moves, positions, evals, this.analyzer.detectOpening(moves), { headers, skipMateThreat: true });
-								const times = moveTimesFromPgn(res.pgn || '', moves.length, headers);
-									const targetSide = this._sideForUsername(headers, username);
-								const sides = targetSide ? [targetSide] : ['white', 'black'];
-
-								for (const side of sides) {
-									const metrics = sideMetrics(results, side, times, headers);
-									allMetrics.push(metrics);
-									const singleScore = scoreMetrics([metrics]);
-									aggregatedGames.push({
-										title: `${metrics.player} as ${side}`,
-										score: singleScore.score,
-										note: `Accuracy ${Math.round(metrics.accuracy)}%, ACPL ${Math.round(metrics.acpl)}, fast bests ${Math.round(metrics.fastBestRate)}%`,
-									});
-								}
-								} catch (err) {
-									skipped += 1;
-									console.warn('Client-side anticheat analysis failed for a game:', err);
-								}
-						} catch (err) {
-							skipped += 1;
-							console.error('Anticheat fetch failed for one game:', err);
-						}
-				}
-
-				if (!allMetrics.length) {
-					throw new Error('No standard chess games could be analyzed. Try fewer or shorter games.');
-				}
-
-				const summary = scoreMetrics(allMetrics);
-				const out = {
-					summary,
-					games: aggregatedGames,
-					gamesAnalyzed: games.length - skipped,
-					gamesSkipped: skipped,
-					subjectsAnalyzed: allMetrics.length,
-					profile: data?.profile || {},
-				};
-
-					this.anticheatMode.results = out;
-					this._renderAnticheatResults(out);
-					this._setAnticheatStatus(`Checked ${out.gamesAnalyzed || 0} game${out.gamesAnalyzed === 1 ? '' : 's'} on the server.`, 'success');
-					this._refreshMe().catch(() => {});
-				} else {
-					// non-PGN sources (lichess/chesscom) - legacy server-side behavior
-					const response = await fetch('/api/anticheat', {
-						method: 'POST',
-						headers: await this._authHeaders({ 'Content-Type': 'application/json' }),
-						cache: 'no-store',
-						body: JSON.stringify({ source, username, pgn, limit }),
-					});
-				const data = await response.json().catch(() => null);
-				if (!response.ok) {
-				  const error = new Error(data?.error || `Anticheat responded with ${response.status}`);
-				  error.code = data?.code;
-				  throw error;
-				}
-					this.anticheatMode.results = data;
-					this._renderAnticheatResults(data);
-					this._setAnticheatStatus(`Checked ${data.gamesAnalyzed || 0} game${data.gamesAnalyzed === 1 ? '' : 's'} on the server.`, 'success');
-					this._refreshMe().catch(() => {});
-				}
+				const payload = source === 'pgn'
+				  ? { source: 'pgn', pgn, limit }
+				  : { source, username, limit };
+				const data = await this._runAnticheatOnServer(payload);
+				this.anticheatMode.results = data;
+				this._renderAnticheatResults(data);
+				this._setAnticheatStatus(`Checked ${data.gamesAnalyzed || 0} game${data.gamesAnalyzed === 1 ? '' : 's'} on the server.`, 'success');
+				this._refreshMe().catch(() => {});
 			} catch (err) {
 				console.error('Anticheat failed:', err);
 				if ((err?.message || '').includes('Free plan includes 1 server anticheat run per day') || err?.code === 'quota_exceeded') {
-				  try {
-				    const browserResult = await this._runAnticheatInBrowser({ source, username, pgn, limit });
-				    this.anticheatMode.results = browserResult;
-				    this._renderAnticheatResults(browserResult);
-				    this._setAnticheatStatus(`Daily server anticheat is used. Checked ${browserResult.gamesAnalyzed || 0} game${browserResult.gamesAnalyzed === 1 ? '' : 's'} in the browser instead.`, 'success');
-				    return;
-				  } catch (browserErr) {
-				    err = browserErr;
-				  }
+				  this._setAnticheatStatus('Daily server anticheat limit reached. Anticheat cannot run in the browser. Buy Boost or try again tomorrow.', 'error');
+				  return;
 				}
 				this._setAnticheatStatus(err.message || 'Anticheat check failed.', 'error');
 				if (this.elAnticheatRiskPill) {
@@ -3225,6 +3395,89 @@ class ChessReviewApp {
 		} finally {
 			this._setAnticheatChecking(false);
 		}
+		  }
+
+		  async _runAnticheatOnServer(payload) {
+		    const controller = new AbortController();
+		    const timeout = setTimeout(() => controller.abort(), 600000);
+		    try {
+		      const response = await fetch('/api/anticheat/stream', {
+		        method: 'POST',
+		        headers: await this._authHeaders({
+		          'Content-Type': 'application/json',
+		          Accept: 'text/event-stream',
+		        }),
+		        signal: controller.signal,
+		        cache: 'no-store',
+		        body: JSON.stringify(payload),
+		      });
+		      if (!response.ok || !response.body) {
+		        const text = await response.text().catch(() => '');
+		        throw new Error(text || `Anticheat stream failed with ${response.status}`);
+		      }
+		      return await this._readAnticheatStream(response);
+		    } catch (err) {
+		      if (err.name === 'AbortError') throw new Error('Anticheat check timed out.');
+		      throw err;
+		    } finally {
+		      clearTimeout(timeout);
+		    }
+		  }
+
+		  async _readAnticheatStream(response) {
+		    const reader = response.body.getReader();
+		    const decoder = new TextDecoder();
+		    let buffer = '';
+		    let finalData = null;
+
+		    const handleEvent = (raw) => {
+		      const lines = raw.split(/\r?\n/);
+		      let event = 'message';
+		      const dataLines = [];
+		      for (const line of lines) {
+		        if (line.startsWith('event:')) event = line.slice(6).trim();
+		        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+		      }
+		      if (!dataLines.length) return;
+		      const data = JSON.parse(dataLines.join('\n'));
+		      if (event === 'status') {
+		        this._setAnticheatStatus(`Analyzing ${data.games || 0} game${data.games === 1 ? '' : 's'} on the server...`, 'loading');
+		      } else if (event === 'progress') {
+		        if (data.phase === 'positions') {
+		          this._setAnticheatStatus(
+		            `Game ${data.gameIndex}/${data.gameTotal}: position ${data.completed}/${data.total}`,
+		            'loading',
+		          );
+		        } else {
+		          this._setAnticheatStatus(data.message || `Analyzing game ${data.gameIndex}/${data.gameTotal}...`, 'loading');
+		        }
+		        if (this.elAnticheatRiskPill) {
+		          this.elAnticheatRiskPill.textContent = 'Checking';
+		          this.elAnticheatRiskPill.className = 'anticheat-risk-pill watch';
+		        }
+		      } else if (event === 'complete') {
+		        finalData = data;
+		      } else if (event === 'error') {
+		        const error = new Error(data.error || 'Anticheat analysis failed.');
+		        error.code = data.code;
+		        throw error;
+		      }
+		    };
+
+		    while (true) {
+		      const { value, done } = await reader.read();
+		      if (done) break;
+		      buffer += decoder.decode(value, { stream: true });
+		      const events = buffer.split(/\n\n/);
+		      buffer = events.pop() || '';
+		      for (const eventText of events) {
+		        if (eventText.trim()) handleEvent(eventText);
+		      }
+		    }
+		    buffer += decoder.decode();
+		    if (buffer.trim()) handleEvent(buffer);
+		    if (!finalData?.summary) throw new Error('Anticheat stream returned no results.');
+		    return finalData;
 		  }
 
 		  async _runAnticheatInBrowser({ source, username, pgn, limit }) {
@@ -3312,10 +3565,14 @@ class ChessReviewApp {
 	          <strong>${this._escapeHtml(summary.headline || 'Anticheat score')}</strong>
 	          <span>${this._escapeHtml(summary.explanation || 'This is a heuristic review, not proof of cheating.')}</span>
 	          <div class="anticheat-metrics">
+	            ${metric('Games', summary.games || games.length)}
 	            ${metric('Win rate', `${Math.round(summary.winRate || 0)}%`)}
 	            ${metric('Accuracy', `${Math.round(summary.accuracy || 0)}%`)}
+	            ${metric('Best moves', `${Math.round(summary.bestRate || 0)}%`)}
 	            ${metric('ACPL', Math.round(summary.acpl || 0))}
+	            ${metric('Mistakes', `${Math.round(summary.mistakeRate || 0)}%`)}
 	            ${metric('Fast bests', `${Math.round(summary.fastBestRate || 0)}%`)}
+	            ${metric('Fast criticals', `${Math.round(summary.fastCriticalRate || 0)}%`)}
 	          </div>
 	        </div>
 	      </div>
@@ -4956,200 +5213,6 @@ class ChessReviewApp {
 				    results.statsRecorded = Boolean(data.publicStats);
 				    return results;
 				  }
-
-				  _isServerChunkResourceError(err) {
-				    const message = String(err?.message || err || '');
-				    return !!err?.retryable
-				      || /413|429|500|502|503|504|busy|warming|retry|capped|timeout|timed out|outofmemory|out of memory|runtime\.outofmemory|signal:\s*killed|server review chunk/i.test(message);
-				  }
-
-				  async _fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex = 0) {
-			    const controller = new AbortController();
-				    const timeout = setTimeout(() => controller.abort(), 55000);
-		    let response;
-	    try {
-			response = await fetch('/api/analyze', {
-		        method: 'POST',
-		        headers: await this._authHeaders({ 'Content-Type': 'application/json' }),
-	        signal: controller.signal,
-			        body: JSON.stringify({
-			          positions,
-			          profile,
-			          chunkStart: baseIndex,
-			        }),
-	      });
-	    } catch (err) {
-	      if (err.name === 'AbortError') {
-	        throw new Error(`Server review chunk ${chunkIndex + 1}/${chunkCount} timed out.`);
-	      }
-	      throw err;
-	    } finally {
-	      clearTimeout(timeout);
-	    }
-
-	    const text = await response.text().catch(() => '');
-	    let data = null;
-		    try {
-		      data = text ? JSON.parse(text) : null;
-		    } catch (_err) {
-		      data = null;
-		    }
-				    if (data?.retryable || data?.error) {
-				      const error = new Error(data.error || `Server review chunk ${chunkIndex + 1}/${chunkCount} needs a retry.`);
-					      error.status = response.status;
-					      error.retryable = Boolean(data.retryable);
-				      error.code = data.code;
-					      throw error;
-				    }
-				    if (!response.ok) {
-				      const error = new Error(data?.error || text || `Server review chunk ${chunkIndex + 1}/${chunkCount} failed with ${response.status}.`);
-			      error.status = response.status;
-			      error.retryable = response.status >= 500 || response.status === 429;
-			      throw error;
-			    }
-				    if (!Array.isArray(data?.evals)) {
-				      throw new Error(`Server review chunk ${chunkIndex + 1}/${chunkCount} returned no evals.`);
-				    }
-				    if (data.publicStats) this._renderPublicStats(data.publicStats);
-				    if (data.quota || data.plan) this._refreshMe().catch(() => {});
-				    return data.evals;
-				  }
-
-					  async _fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex = 0, retryCount = 0) {
-					    try {
-					      return await this._fetchServerEvalChunk(positions, profile, chunkIndex, chunkCount, baseIndex);
-					    } catch (err) {
-					      const message = String(err?.message || err || '');
-					      if (positions.length > 1 && /busy|warming|retrying shortly/i.test(message) && retryCount < 3) {
-					        const waitMs = 500 + (retryCount * retryCount * 400);
-				        this.elReviewBtnText.textContent = 'Reviewing Game';
-				        this._updateLiveEvalPanel({
-				          busy: true,
-				          score: null,
-				          line: 'Reviewing Game',
-				          meta: 'Server is catching up.',
-				        });
-					        await new Promise((resolve) => setTimeout(resolve, waitMs));
-					        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1);
-					      }
-					      if (positions.length <= 1 && this._isServerChunkResourceError(err) && retryCount < 4) {
-				        const waitMs = 450 + (retryCount * retryCount * 350);
-					        this.elReviewBtnText.textContent = 'Reviewing Game';
-					        this._updateLiveEvalPanel({
-					          busy: true,
-					          score: null,
-					          line: 'Reviewing Game',
-					          meta: 'Server is catching up.',
-					        });
-				        await new Promise((resolve) => setTimeout(resolve, waitMs));
-					        return this._fetchServerEvalChunkSafely(positions, profile, chunkIndex, chunkCount, baseIndex, retryCount + 1);
-				      }
-					    if (positions.length <= 1 || !this._isServerChunkResourceError(err)) throw err;
-				      const midpoint = Math.ceil(positions.length / 2);
-		      this._updateLiveEvalPanel({
-		        busy: true,
-		        score: null,
-			        line: 'Reviewing Game',
-			        meta: 'Adjusting analysis batch.',
-		      });
-				      const lighterProfile = {
-				        ...profile,
-				        depth: 14,
-				        multiPv: 1,
-					        timeoutMs: 4500,
-				      };
-			      const first = await this._fetchServerEvalChunkSafely(
-			        positions.slice(0, midpoint),
-			        lighterProfile,
-			        chunkIndex,
-			        chunkCount,
-				        baseIndex
-				      );
-			      const second = await this._fetchServerEvalChunkSafely(
-			        positions.slice(midpoint),
-			        lighterProfile,
-			        chunkIndex,
-			        chunkCount,
-				        baseIndex + midpoint
-				      );
-		      return [...first, ...second];
-		    }
-		  }
-
-			  async _analyzeGameOnServerChunks(positions, reviewProfile) {
-			    const total = positions.length;
-			    const chunkSize = total > 80 ? 6 : 8;
-		    const chunks = [];
-		    for (let i = 0; i < total; i += chunkSize) {
-		      chunks.push({ start: i, positions: positions.slice(i, i + chunkSize) });
-		    }
-
-					    const serverProfile = {
-					      key: reviewProfile.key,
-					      depth: 14,
-					      multiPv: 1,
-						      timeoutMs: 4500,
-					      serverEngine: this.engineSettings.serverStrongReview ? 'full' : 'lite',
-					    };
-
-					    const evals = new Array(total);
-					    let completedPositions = 0;
-					    this._startReviewPlayback({
-					      start: 0,
-					      end: Math.max(0, this.gameMoves.length - 1),
-					      initialIndex: 0,
-					      minDelay: 520,
-					      maxDelay: 1200,
-					      loop: true,
-					      wrap: true,
-					    });
-
-					    for (let i = 0; i < chunks.length; i += 1) {
-					      const chunk = chunks[i];
-					      this.elReviewBtnText.textContent = 'Reviewing Game';
-					      this._updateLiveEvalPanel({
-					        busy: true,
-					        score: null,
-					        line: 'Reviewing Game',
-					        meta: `${completedPositions}/${total} positions`,
-					      });
-
-					      const chunkEvals = await this._fetchServerEvalChunkSafely(
-					        chunk.positions,
-					        serverProfile,
-					        i,
-					        chunks.length,
-					        chunk.start
-					      );
-					      chunkEvals.forEach((entry, offset) => {
-					        evals[chunk.start + offset] = entry;
-					      });
-					      completedPositions += chunkEvals.length;
-						      const pct = 12 + Math.round((completedPositions / Math.max(1, total)) * 76);
-						      this.elProgressFill.style.width = `${pct}%`;
-						      await this._sprintReviewPlaybackTo(completedPositions - 1, { minDelay: 12, maxDelay: 58 });
-					    }
-
-		    if (evals.length !== positions.length || evals.some((entry) => !entry)) {
-		      throw new Error('Server review returned an incomplete evaluation set.');
-		    }
-
-			    this.elProgressFill.style.width = '94%';
-			    this.elReviewBtnText.textContent = 'Classifying moves...';
-			    if (this.gameMoves.length > 0) {
-			      await this._sprintReviewPlaybackTo(this.gameMoves.length - 1, { minDelay: 6, maxDelay: 20 });
-			    }
-		    const opening = this.analyzer.detectOpening(this.gameMoves);
-	    const results = this.analyzer.resultsFromEvals(
-	      this.gameMoves,
-	      positions,
-	      evals,
-	      opening,
-	      { initialFen: this.initialFen, headers: this.gameHeaders || {}, skipMateThreat: true }
-	    );
-	    this.elProgressFill.style.width = '100%';
-	    return results;
-	  }
 
 	  _showOpeningInfo(opening) {
     if (!opening) {
