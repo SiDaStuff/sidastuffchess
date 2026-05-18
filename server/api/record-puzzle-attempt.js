@@ -82,6 +82,22 @@ async function restWrite(path, value) {
   return restRequest('PUT', url, value);
 }
 
+async function restRead(path) {
+  const base = process.env.REALTIME_DATABASE_URL;
+  const secret = process.env.REALTIME_DATABASE_SECRET;
+  if (!base) throw new Error('REALTIME_DATABASE_URL not configured');
+  const url = `${base.replace(/\/$/, '')}/${path}.json${secret ? `?auth=${encodeURIComponent(secret)}` : ''}`;
+  return restRequest('GET', url);
+}
+
+async function restPatch(path, value) {
+  const base = process.env.REALTIME_DATABASE_URL;
+  const secret = process.env.REALTIME_DATABASE_SECRET;
+  if (!base) throw new Error('REALTIME_DATABASE_URL not configured');
+  const url = `${base.replace(/\/$/, '')}/${path}.json${secret ? `?auth=${encodeURIComponent(secret)}` : ''}`;
+  return restRequest('PATCH', url, value);
+}
+
 /**
  * Calculate rating change based on puzzle rating and result
  */
@@ -130,34 +146,85 @@ exports.handler = async (event) => {
     }
 
     const body = JSON.parse(event.body || '{}');
-    const { userId, puzzleRating, userRating, won, puzzleId } = body;
+    const { userId, puzzleRating, won, puzzleId } = body;
 
-    if (!userId || puzzleRating === undefined || userRating === undefined || won === undefined) {
+    if (!userId || puzzleRating === undefined || won === undefined) {
       return {
         statusCode: 400,
         headers,
-        body: JSON.stringify({ error: 'Missing required fields: userId, puzzleRating, userRating, won' }),
+        body: JSON.stringify({ error: 'Missing required fields: userId, puzzleRating, won' }),
       };
     }
 
-    // Simple flow: compute delta using provided userRating, set profile.puzzleRating, and append a history entry.
-    const currentRating = Math.max(100, Number(userRating) || 1500);
-    const delta = calculateRatingDelta(Number(puzzleRating), currentRating, Boolean(won));
-    const newRating = Math.max(100, currentRating + delta);
+    const safePuzzleId = puzzleId ? String(puzzleId).replace(/[.#$\[\]/]/g, '_') : '';
+    let currentRating = 1500;
+    let stats = { solved: 0, attempted: 0, streak: 0 };
+    let alreadyAttempted = false;
 
     if (!useRest) {
-      // Admin SDK path: minimal updates
       const profileRef = database.ref(`users/${userId}/profile`);
-      await profileRef.update({ puzzleRating: newRating, updatedAt: admin.database.ServerValue.TIMESTAMP });
-      if (puzzleId) {
+      const snap = await profileRef.once('value');
+      const profile = snap.val() || {};
+      alreadyAttempted = !!(safePuzzleId && (profile.attemptedPuzzleIds || {})[safePuzzleId]);
+      currentRating = Math.max(100, Number(profile.puzzleRating) || 1500);
+      stats = {
+        solved: Math.max(0, Number(profile.puzzleStats?.solved) || 0),
+        attempted: Math.max(0, Number(profile.puzzleStats?.attempted) || 0),
+        streak: Math.max(0, Number(profile.puzzleStats?.streak) || 0),
+      };
+    } else {
+      const profile = await restRead(`users/${encodeURIComponent(userId)}/profile`) || {};
+      alreadyAttempted = !!(safePuzzleId && (profile.attemptedPuzzleIds || {})[safePuzzleId]);
+      currentRating = Math.max(100, Number(profile.puzzleRating) || 1500);
+      stats = {
+        solved: Math.max(0, Number(profile.puzzleStats?.solved) || 0),
+        attempted: Math.max(0, Number(profile.puzzleStats?.attempted) || 0),
+        streak: Math.max(0, Number(profile.puzzleStats?.streak) || 0),
+      };
+    }
+
+    if (alreadyAttempted) {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: true,
+          duplicate: true,
+          delta: 0,
+          ratingAfter: currentRating,
+          stats,
+        }),
+      };
+    }
+
+    const delta = calculateRatingDelta(Number(puzzleRating), currentRating, Boolean(won));
+    const newRating = Math.max(100, currentRating + delta);
+    const nextStats = {
+      attempted: stats.attempted + 1,
+      solved: stats.solved + (won ? 1 : 0),
+      streak: won ? stats.streak + 1 : 0,
+    };
+    const update = {
+      puzzleRating: newRating,
+      puzzleStats: nextStats,
+      updatedAt: useRest ? Date.now() : admin.database.ServerValue.TIMESTAMP,
+    };
+    if (safePuzzleId) {
+      update[`attemptedPuzzleIds/${safePuzzleId}`] = true;
+      if (won) update[`solvedPuzzleIds/${safePuzzleId}`] = true;
+    }
+
+    if (!useRest) {
+      const profileRef = database.ref(`users/${userId}/profile`);
+      await profileRef.update(update);
+      if (safePuzzleId) {
         const historyRef = database.ref(`users/${userId}/puzzleHistory/${Date.now()}`);
-        await historyRef.set({ puzzleId, puzzleRating, won, delta, ratingAfter: newRating, timestamp: admin.database.ServerValue.TIMESTAMP });
+        await historyRef.set({ puzzleId: safePuzzleId, puzzleRating, won, delta, ratingAfter: newRating, timestamp: admin.database.ServerValue.TIMESTAMP });
       }
     } else {
-      // REST fallback: PATCH profile and PUT history
-      await restRequest('PATCH', `${process.env.REALTIME_DATABASE_URL.replace(/\/$/, '')}/users/${encodeURIComponent(userId)}/profile.json${process.env.REALTIME_DATABASE_SECRET ? `?auth=${encodeURIComponent(process.env.REALTIME_DATABASE_SECRET)}` : ''}`, { puzzleRating: newRating, updatedAt: Date.now() });
-      if (puzzleId) {
-        const entry = { puzzleId, puzzleRating, won, delta, ratingAfter: newRating, timestamp: Date.now() };
+      await restPatch(`users/${encodeURIComponent(userId)}/profile`, update);
+      if (safePuzzleId) {
+        const entry = { puzzleId: safePuzzleId, puzzleRating, won, delta, ratingAfter: newRating, timestamp: Date.now() };
         await restRequest('PUT', `${process.env.REALTIME_DATABASE_URL.replace(/\/$/, '')}/users/${encodeURIComponent(userId)}/puzzleHistory/${Date.now()}.json${process.env.REALTIME_DATABASE_SECRET ? `?auth=${encodeURIComponent(process.env.REALTIME_DATABASE_SECRET)}` : ''}`, entry);
       }
     }
@@ -166,10 +233,11 @@ exports.handler = async (event) => {
       statusCode: 200,
       headers,
       body: JSON.stringify({
-        success: true,
-        delta,
-        ratingAfter: newRating,
-      }),
+	        success: true,
+	        delta,
+	        ratingAfter: newRating,
+	        stats: nextStats,
+	      }),
     };
   } catch (err) {
     console.error('Error recording puzzle attempt:', err);

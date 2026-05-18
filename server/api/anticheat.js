@@ -22,6 +22,49 @@ const ANTICHEAT_PROFILE = {
   multiPv: 1,
   timeoutMs: 2800,
 };
+const https = require('https');
+const http = require('http');
+
+function fetchCompat(url, options = {}, redirectCount = 0) {
+  if (typeof fetch === 'function') return fetch(url, options);
+  return new Promise((resolve, reject) => {
+    try {
+      const parsed = new URL(url);
+      const transport = parsed.protocol === 'http:' ? http : https;
+      const req = transport.request({
+        method: options.method || 'GET',
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
+        path: parsed.pathname + parsed.search,
+        headers: options.headers || {},
+      }, (res) => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirectCount < 4) {
+          res.resume();
+          const nextUrl = new URL(res.headers.location, parsed).toString();
+          fetchCompat(nextUrl, options, redirectCount + 1).then(resolve, reject);
+          return;
+        }
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          const body = Buffer.concat(chunks).toString('utf8');
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            headers: res.headers,
+            text: async () => body,
+            json: async () => JSON.parse(body || 'null'),
+          });
+        });
+      });
+      req.on('error', reject);
+      if (options.body) req.write(options.body);
+      req.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 
 let cachedEngine = null;
 let cachedEngineInit = null;
@@ -334,7 +377,7 @@ async function lichessGames(username, limit) {
     finished: 'true',
     sort: 'dateDesc',
   });
-  const response = await fetch(`https://lichess.org/api/games/user/${encodeURIComponent(username)}?${params.toString()}`, {
+  const response = await fetchCompat(`https://lichess.org/api/games/user/${encodeURIComponent(username)}?${params.toString()}`, {
     headers: { Accept: 'application/x-chess-pgn' },
   });
   if (!response.ok) throw new Error(`Lichess responded with ${response.status}`);
@@ -343,7 +386,7 @@ async function lichessGames(username, limit) {
 }
 
 async function chessComGames(username, limit) {
-  const archiveResponse = await fetch(`https://api.chess.com/pub/player/${encodeURIComponent(username)}/games/archives`, {
+  const archiveResponse = await fetchCompat(`https://api.chess.com/pub/player/${encodeURIComponent(username)}/games/archives`, {
     headers: { Accept: 'application/json' },
   });
   if (!archiveResponse.ok) throw new Error(`Chess.com responded with ${archiveResponse.status}`);
@@ -353,7 +396,7 @@ async function chessComGames(username, limit) {
 
   for (const monthUrl of archives) {
     if (games.length >= Math.max(limit, 20)) break;
-    const monthResponse = await fetch(monthUrl, { headers: { Accept: 'application/json' } });
+    const monthResponse = await fetchCompat(monthUrl, { headers: { Accept: 'application/json' } });
     if (!monthResponse.ok) continue;
     const monthData = await monthResponse.json();
     for (const game of Array.isArray(monthData.games) ? monthData.games : []) {
@@ -470,11 +513,61 @@ exports.handler = async (event, context = {}) => {
       return json(200, result);
     }
 
-    // Full server-side analysis (legacy): use MoveAnalyzer to compute metrics server-side.
-    const { MoveAnalyzer } = loadAnalyzer();
-    const analyzer = new MoveAnalyzer();
-    analyzer.setReviewProfile(ANTICHEAT_PROFILE);
-  } catch (err) {
+	    // Full server-side analysis (legacy): use MoveAnalyzer to compute metrics server-side.
+	    const { MoveAnalyzer } = loadAnalyzer();
+	    const analyzer = new MoveAnalyzer();
+	    analyzer.setReviewProfile(ANTICHEAT_PROFILE);
+	    const result = await withTimeout(withEngineQueue(async () => {
+	      await reviewEngine.newGame();
+	      const allMetrics = [];
+	      const aggregatedGames = [];
+	      let skipped = 0;
+	      let processedPositions = 0;
+
+	      for (const pgn of pgns) {
+	        try {
+	          const parsed = parseGame(pgn);
+	          const remaining = TOTAL_POSITIONS_LIMIT - processedPositions;
+	          if (remaining <= 0) {
+	            skipped += 1;
+	            continue;
+	          }
+	          if (parsed.moves.length > remaining) parsed.moves = parsed.moves.slice(0, remaining);
+	          processedPositions += parsed.moves.length;
+	          const results = await analyzeParsedGame(parsed, analyzer, reviewEngine);
+	          const times = moveTimesFromPgn(parsed.pgn, parsed.moves.length, parsed.headers);
+	          const targetSide = sideForUsername(parsed.headers, username);
+	          const sides = targetSide ? [targetSide] : ['white', 'black'];
+
+	          for (const side of sides) {
+	            const metrics = sideMetrics(results, side, times, parsed.headers);
+	            allMetrics.push(metrics);
+	            const singleScore = scoreMetrics([metrics]);
+	            aggregatedGames.push({
+	              title: `${metrics.player} as ${side}`,
+	              score: singleScore.score,
+	              note: `Accuracy ${Math.round(metrics.accuracy)}%, ACPL ${Math.round(metrics.acpl)}, fast bests ${Math.round(metrics.fastBestRate)}%`,
+	            });
+	          }
+	        } catch (err) {
+	          skipped += 1;
+	          console.warn('Skipping anticheat game:', err.message);
+	        }
+	      }
+
+	      if (!allMetrics.length) throw new Error('No standard chess games could be analyzed. Try fewer or shorter games.');
+	      return {
+	        summary: scoreMetrics(allMetrics),
+	        games: aggregatedGames,
+	        gamesAnalyzed: pgns.length - skipped,
+	        gamesSkipped: skipped,
+	        subjectsAnalyzed: allMetrics.length,
+	        profile: ANTICHEAT_PROFILE,
+	      };
+	    }), 30000, 'Anticheat overall processing timed out.');
+
+	    return json(200, result);
+	  } catch (err) {
     console.error('Anticheat failed:', err);
     if (/cancelled|not ready|timed out waiting|out of memory|abort/i.test(String(err?.message || err))) {
       try {

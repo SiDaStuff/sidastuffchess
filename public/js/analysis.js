@@ -1191,11 +1191,18 @@ class MoveAnalyzer {
 	      return MoveClassification.FORCED;
 	    }
 
-	    if (opponentMateAfter) {
-	      return cpLoss >= 120 || playerEdgeAfter <= -9000
-	        ? MoveClassification.BLUNDER
-	        : MoveClassification.MISTAKE;
-	    }
+		    if (opponentMateAfter) {
+		      return cpLoss >= 120 || playerEdgeAfter <= -9000
+		        ? MoveClassification.BLUNDER
+		        : MoveClassification.MISTAKE;
+		    }
+
+		    const forcedMateContinuation = Math.abs(playerEdgeBefore) >= 9000
+		      && Math.abs(playerEdgeAfter) >= 9000
+		      && expectedLoss <= 0.01;
+		    if (forcedMateContinuation && nearlyBest) {
+		      return isBestMove ? MoveClassification.BEST : MoveClassification.EXCELLENT;
+		    }
 
 		    const hasWinningOpportunity = playerEdgeBefore >= 220;
 		    const droppedWin = hasWinningOpportunity && playerEdgeAfter < 120;

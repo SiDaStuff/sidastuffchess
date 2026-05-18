@@ -10,10 +10,13 @@ const SERVER_REVIEW_PROFILE = {
   timeoutMs: 4500,
 };
 const SERVER_POSITION_BATCH_LIMIT = 8;
+const SERVER_ACTIVE_ANALYSIS_LIMIT = 5;
 
 let cachedEngine = null;
 let cachedEngineInit = null;
-let engineBusy = false;
+let engineChain = Promise.resolve();
+let activeAnalysisJobs = 0;
+const analysisQueue = [];
 const evalCache = new Map();
 const EVAL_CACHE_LIMIT = 800;
 
@@ -91,14 +94,43 @@ async function getServerEngine() {
 }
 
 function withEngineQueue(work) {
-  if (engineBusy) {
-    throw new Error('Server engine is busy. Retrying shortly.');
+  const run = engineChain.then(work, work);
+  engineChain = run.catch(() => {});
+  return run;
+}
+
+function drainAnalysisQueue() {
+  while (activeAnalysisJobs < SERVER_ACTIVE_ANALYSIS_LIMIT && analysisQueue.length) {
+    const next = analysisQueue.shift();
+    activeAnalysisJobs += 1;
+    next.resolve();
   }
-  engineBusy = true;
-  return Promise.resolve()
-    .then(work)
+}
+
+function analysisQueueStatus() {
+  return {
+    active: activeAnalysisJobs,
+    queued: analysisQueue.length,
+    limit: SERVER_ACTIVE_ANALYSIS_LIMIT,
+  };
+}
+
+function withAnalysisSlot(work, onQueued = null) {
+  const queuedIndex = analysisQueue.length + 1;
+  const enter = activeAnalysisJobs < SERVER_ACTIVE_ANALYSIS_LIMIT
+    ? Promise.resolve().then(() => {
+        activeAnalysisJobs += 1;
+      })
+    : new Promise((resolve) => {
+        analysisQueue.push({ resolve });
+        if (onQueued) onQueued({ ...analysisQueueStatus(), queuedPosition: queuedIndex });
+      });
+
+  return enter
+    .then(() => work(analysisQueueStatus()))
     .finally(() => {
-      engineBusy = false;
+      activeAnalysisJobs = Math.max(0, activeAnalysisJobs - 1);
+      drainAnalysisQueue();
     });
 }
 
@@ -170,6 +202,7 @@ exports.handler = async (event, context = {}) => {
   }
 
     try {
+      return await withAnalysisSlot(async () => {
         const engine = await withTimeout(
           getServerEngine(),
           8000,
@@ -235,6 +268,7 @@ exports.handler = async (event, context = {}) => {
        source: 'server',
       publicStats,
     });
+      });
   } catch (err) {
     console.error('Server analysis failed:', err);
     if (/cancelled|not ready|timed out waiting|out of memory|abort/i.test(String(err?.message || err))) {
@@ -249,3 +283,135 @@ exports.handler = async (event, context = {}) => {
     return retryable(err.message || 'Server analysis failed.');
   }
 };
+
+function sseWrite(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data || {})}\n\n`);
+}
+
+exports.streamHandler = async (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders?.();
+
+  let payload = {};
+  try {
+    payload = req.body && typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
+  } catch (_err) {
+    sseWrite(res, 'error', { error: 'Invalid JSON body.' });
+    res.end();
+    return;
+  }
+
+  const moves = Array.isArray(payload.moves) ? payload.moves : [];
+  if (!moves.length) {
+    sseWrite(res, 'error', { error: 'No moves were provided.' });
+    res.end();
+    return;
+  }
+  if (moves.length > 120) {
+    sseWrite(res, 'error', { error: 'Server review is capped at 120 plies.' });
+    res.end();
+    return;
+  }
+
+  try {
+    await withAnalysisSlot(async (slotStatus) => {
+      sseWrite(res, 'status', { message: 'started', queue: slotStatus });
+      const Chess = loadChess();
+      const { MoveAnalyzer } = loadAnalyzer();
+      const analyzer = new MoveAnalyzer();
+      const profile = payload.profile || {};
+      analyzer.setReviewProfile({
+        depth: SERVER_REVIEW_PROFILE.depth,
+        multiPv: Math.max(1, Math.min(Number(profile.multiPv) || SERVER_REVIEW_PROFILE.multiPv, 2)),
+        timeoutMs: Math.max(1200, Math.min(Number(profile.timeoutMs) || SERVER_REVIEW_PROFILE.timeoutMs, SERVER_REVIEW_PROFILE.timeoutMs)),
+      });
+
+      const initialFen = payload.initialFen || payload.headers?.FEN || undefined;
+      if (initialFen) {
+        const validation = new Chess();
+        if (!validation.load(initialFen)) throw new Error('Invalid initial FEN.');
+      }
+
+      const engine = await withTimeout(getServerEngine(), 8000, 'Server engine is still warming up.');
+      const reviewEngine = cachedEngineAdapter(engine);
+      const positions = analyzer._positionsForMoves(moves, initialFen);
+      const evals = [];
+      const chunkSize = positions.length > 80 ? 6 : SERVER_POSITION_BATCH_LIMIT;
+
+      for (let i = 0; i < positions.length; i += chunkSize) {
+        if (res.destroyed) return;
+        const chunk = positions.slice(i, i + chunkSize);
+        const chunkEvals = await withEngineQueue(() => analyzer.evaluatePositions(chunk, reviewEngine, null));
+        chunkEvals.forEach((entry, offset) => {
+          evals[i + offset] = entry;
+        });
+        sseWrite(res, 'progress', {
+          completed: Math.min(i + chunkEvals.length, positions.length),
+          total: positions.length,
+          chunkStart: i,
+          evals: chunkEvals,
+        });
+      }
+
+      const results = analyzer.resultsFromEvals(
+        moves,
+        positions,
+        evals,
+        analyzer.detectOpening(moves),
+        { initialFen, headers: payload.headers || {}, skipMateThreat: true }
+      );
+
+      let publicStats = null;
+      try {
+        publicStats = await incrementPublicStats({ movesAnalyzed: moves.length });
+      } catch (err) {
+        console.warn('Could not update public stats:', err.message);
+      }
+
+      const plainResults = results.map((entry) => ({
+        ...entry,
+        classification: undefined,
+        classificationKey: entry.classificationKey,
+      }));
+      sseWrite(res, 'complete', {
+        results: plainResults,
+        opening: results.opening,
+        openingDrift: results.openingDrift,
+        trainingQueue: results.trainingQueue,
+        patternStats: results.patternStats,
+        reviewNarrative: results.reviewNarrative,
+        criticalMoments: (results.criticalMoments || []).map((entry) => ({
+          ...entry,
+          classification: undefined,
+          classificationKey: entry.classificationKey,
+        })),
+        whiteAccuracy: results.whiteAccuracy,
+        blackAccuracy: results.blackAccuracy,
+        whiteAcpl: results.whiteAcpl,
+        blackAcpl: results.blackAcpl,
+        whiteCaps: results.whiteCaps,
+        blackCaps: results.blackCaps,
+        phaseSummary: results.phaseSummary,
+        depth: analyzer.analysisDepth,
+        multiPv: analyzer.multiPvCount,
+        source: 'server-stream',
+        publicStats,
+      });
+    }, (queue) => {
+      sseWrite(res, 'queued', queue);
+    });
+  } catch (err) {
+    console.error('Server stream analysis failed:', err);
+    sseWrite(res, 'error', { error: err.message || 'Server analysis failed.' });
+  } finally {
+    res.end();
+  }
+};
+
+exports.analysisQueueStatus = analysisQueueStatus;

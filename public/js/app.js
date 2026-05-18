@@ -43,8 +43,9 @@ class ChessReviewApp {
 	      adjustment: 0,
 	      performanceEma: 0,
 	      mistakeRateEma: 0,
-	      thinking: false,
-      lastAdviceMoveIndex: null,
+		      thinking: false,
+		      gameOverCelebrated: false,
+	      lastAdviceMoveIndex: null,
 	      hintLevel: 0,
 	      hintFen: '',
 	      hintMove: '',
@@ -622,8 +623,9 @@ class ChessReviewApp {
 	    this.puzzleMode.attemptedPuzzleIds = new Set(this._localAttemptedPuzzleIds());
 	  }
 
-	  _saveLocalPuzzleProfile() {
-	    try {
+		  _saveLocalPuzzleProfile() {
+		    if (this.authState?.user) return;
+		    try {
 	      window.localStorage?.setItem('sidastuff.puzzleProfile', JSON.stringify({
 	        rating: Math.max(100, Math.round(Number(this.puzzleMode.rating) || 1500)),
 	        solved: Math.max(0, Number(this.puzzleMode.solvedCount) || 0),
@@ -636,8 +638,9 @@ class ChessReviewApp {
 	    }
 	  }
 
-		  _rememberLocalPuzzleAttempt(puzzleId) {
-		    if (!puzzleId) return;
+			  _rememberLocalPuzzleAttempt(puzzleId) {
+			    if (this.authState?.user) return;
+			    if (!puzzleId) return;
 		    const ids = new Set(this._localAttemptedPuzzleIds());
 		    ids.add(puzzleId);
 		    try {
@@ -1882,11 +1885,11 @@ class ChessReviewApp {
 	        color: '#F8D7D4',
 	        ringColor: '#CA3431',
 	      }));
-	      this.board.clearBestMoveArrow();
-	      if (!this.puzzleMode.failed) {
-	        this.puzzleMode.failed = true;
-	        this._recordPuzzleAttempt(false);
-	      }
+		      this.board.clearBestMoveArrow();
+		      if (!this.puzzleMode.failed) {
+		        this.puzzleMode.failed = true;
+		        await this._recordPuzzleAttempt(false);
+		      }
 	      this._setPuzzleStatus('Not quite. Try another move, or use Hint if you want a nudge.', 'error');
 	      this._syncPuzzlePanel();
 	      this._syncActionButtons();
@@ -1910,10 +1913,11 @@ class ChessReviewApp {
 	    }));
 	    this.board.clearBestMoveArrow();
 
-		    if (this.puzzleMode.step >= this.puzzleMode.solution.length) {
-		      this.puzzleMode.solved = true;
-		      const rated = !this.puzzleMode.failed ? this._recordPuzzleAttempt(true) : false;
-		      this._setPuzzleStatus(!rated && !this.puzzleMode.failed
+			    if (this.puzzleMode.step >= this.puzzleMode.solution.length) {
+			      this.puzzleMode.solved = true;
+			      const rated = !this.puzzleMode.failed ? await this._recordPuzzleAttempt(true) : false;
+			      this._celebrate();
+			      this._setPuzzleStatus(!rated && !this.puzzleMode.failed
 		        ? 'Solved again. Rating is unchanged.'
 		        : this.puzzleMode.failed
 		        ? 'Solved in practice. The rating change was already applied after the miss.'
@@ -1925,7 +1929,7 @@ class ChessReviewApp {
 	    window.setTimeout(() => this._playPuzzleReply(), 420);
 	  }
 
-			  _playPuzzleReply() {
+				  async _playPuzzleReply() {
 		    if (!this.puzzleMode.active || this.puzzleMode.solved) return;
 	    const expected = this.puzzleMode.solution[this.puzzleMode.step];
 	    if (!expected) return;
@@ -1949,10 +1953,11 @@ class ChessReviewApp {
 	      ringColor: '#346ea5',
 	    }));
 	    this._playMoveSound(move, this.currentMoveIndex);
-	    if (this.puzzleMode.step >= this.puzzleMode.solution.length) {
-	      this.puzzleMode.solved = true;
-	      const rated = !this.puzzleMode.failed ? this._recordPuzzleAttempt(true) : false;
-	      this._setPuzzleStatus(!rated && !this.puzzleMode.failed
+		    if (this.puzzleMode.step >= this.puzzleMode.solution.length) {
+		      this.puzzleMode.solved = true;
+		      const rated = !this.puzzleMode.failed ? await this._recordPuzzleAttempt(true) : false;
+		      this._celebrate();
+		      this._setPuzzleStatus(!rated && !this.puzzleMode.failed
 	        ? 'Solved again. Rating is unchanged.'
 	        : this.puzzleMode.failed
 	        ? 'Solved in practice. The rating change was already applied after the miss.'
@@ -2000,22 +2005,45 @@ class ChessReviewApp {
 	    this._setPuzzleStatus(`Full hint: ${this.analyzer.uciToSan(this.chess.fen(), expected) || expected}.`);
 	  }
 
-	  _recordPuzzleAttempt(won) {
-	    const puzzleId = this.puzzleMode.current?.puzzle?.id || '';
-	    if (!this.puzzleMode.attemptedPuzzleIds) this.puzzleMode.attemptedPuzzleIds = new Set(this._localAttemptedPuzzleIds());
-	    if (puzzleId && this.puzzleMode.attemptedPuzzleIds.has(puzzleId)) {
+		  async _recordPuzzleAttempt(won) {
+		    const puzzleId = this.puzzleMode.current?.puzzle?.id || '';
+		    if (!this.puzzleMode.attemptedPuzzleIds) this.puzzleMode.attemptedPuzzleIds = new Set(this._localAttemptedPuzzleIds());
+		    if (puzzleId && this.puzzleMode.attemptedPuzzleIds.has(puzzleId)) {
 	      this.puzzleMode.lastDelta = 0;
 	      this._rememberLocalPuzzleAttempt(puzzleId);
-	      this._setPuzzleStatus('Puzzle already attempted. Rating is unchanged.');
-	      return false;
-	    }
-	    if (puzzleId) {
-	      this.puzzleMode.attemptedPuzzleIds.add(puzzleId);
-	      this._rememberLocalPuzzleAttempt(puzzleId);
-	    }
-	    const puzzleRating = Number(this.puzzleMode.current?.puzzle?.rating) || 1500;
-	    const rating = Number(this.puzzleMode.rating) || 1500;
-	    const expected = 1 / (1 + Math.pow(10, (puzzleRating - rating) / 400));
+		      this._setPuzzleStatus('Puzzle already attempted. Rating is unchanged.');
+		      return false;
+		    }
+		    const puzzleRating = Number(this.puzzleMode.current?.puzzle?.rating) || 1500;
+		    const rating = Number(this.puzzleMode.rating) || 1500;
+		    if (this.authState?.user) {
+		      const result = await this._persistPuzzleStats(won, rating);
+		      if (!result?.success || result.duplicate) {
+		        this.puzzleMode.lastDelta = 0;
+		        if (result?.duplicate && puzzleId) this.puzzleMode.attemptedPuzzleIds.add(puzzleId);
+		        this._syncPuzzlePanel();
+		        return false;
+		      }
+		      if (puzzleId) this.puzzleMode.attemptedPuzzleIds.add(puzzleId);
+		      const ratingAfter = Math.max(100, Math.round(Number(result.ratingAfter) || rating));
+		      this.puzzleMode.rating = ratingAfter;
+		      this.puzzleMode.lastDelta = Number(result.delta) || 0;
+		      if (result.stats) {
+		        this.puzzleMode.solvedCount = Math.max(0, Number(result.stats.solved) || 0);
+		        this.puzzleMode.attemptedCount = Math.max(0, Number(result.stats.attempted) || 0);
+		        this.puzzleMode.streak = Math.max(0, Number(result.stats.streak) || 0);
+		      }
+		      if (won) this._recordPublicStatEvent('puzzle_solved');
+		      this._animatePuzzleRatingChange(rating, ratingAfter, this.puzzleMode.lastDelta);
+		      this._syncPuzzlePanel();
+		      this._syncAccountUi();
+		      return true;
+		    }
+		    if (puzzleId) {
+		      this.puzzleMode.attemptedPuzzleIds.add(puzzleId);
+		      this._rememberLocalPuzzleAttempt(puzzleId);
+		    }
+		    const expected = 1 / (1 + Math.pow(10, (puzzleRating - rating) / 400));
 	    const delta = Math.round(24 * ((won ? 1 : 0) - expected));
 	    this.puzzleMode.rating = Math.max(100, rating + delta);
 	    this.puzzleMode.lastDelta = delta;
@@ -2026,15 +2054,14 @@ class ChessReviewApp {
 	    } else {
 	      this.puzzleMode.streak = 0;
 	    }
-		    this._persistPuzzleStats(won, rating);
-		    this._saveLocalPuzzleProfile();
+			    this._saveLocalPuzzleProfile();
 		    if (won) this._recordPublicStatEvent('puzzle_solved');
 		    this._animatePuzzleRatingChange(rating, this.puzzleMode.rating, delta);
 		    this._syncPuzzlePanel();
 		    return true;
 		  }
 
-		  _animatePuzzleRatingChange(fromRating, toRating, delta = 0) {
+			  _animatePuzzleRatingChange(fromRating, toRating, delta = 0) {
 		    const target = this.elPuzzleUserRating;
 		    if (!target) return;
 		    const start = Math.round(Number(fromRating) || 1500);
@@ -2054,15 +2081,38 @@ class ChessReviewApp {
 		      target.textContent = String(end);
 		      setTimeout(() => target.classList.remove('rating-up', 'rating-down'), 360);
 		    };
-		    requestAnimationFrame(tick);
-		  }
+			    requestAnimationFrame(tick);
+			  }
+
+			  _celebrate() {
+			    if (typeof window.confetti !== 'function') return;
+			    window.confetti({
+			      particleCount: 120,
+			      spread: 72,
+			      origin: { y: 0.68 },
+			      colors: ['#f7c631', '#0d8f8b', '#346ea5', '#b88d58', '#ffffff'],
+			    });
+			    window.setTimeout(() => {
+			      window.confetti({
+			        particleCount: 70,
+			        angle: 60,
+			        spread: 58,
+			        origin: { x: 0, y: 0.72 },
+			      });
+			      window.confetti({
+			        particleCount: 70,
+			        angle: 120,
+			        spread: 58,
+			        origin: { x: 1, y: 0.72 },
+			      });
+			    }, 160);
+			  }
 
 		  async _persistPuzzleStats(won, ratingBefore = this.puzzleMode.rating) {
 		    const user = this.authState.user;
-		    if (!user) return;
+		    if (!user) return null;
 	    
 	    try {
-		// Use server API to record puzzle attempt and update ratings
 		const response = await fetch('/api/record-puzzle-attempt', {
 	        method: 'POST',
 	        headers: { 'Content-Type': 'application/json' },
@@ -2070,68 +2120,30 @@ class ChessReviewApp {
 		        body: JSON.stringify({
 		          userId: user.uid,
 		          puzzleRating: Number(this.puzzleMode.current?.puzzle?.rating) || 1500,
-		          userRating: Number(ratingBefore) || 1500,
 		          won: !!won,
 		          puzzleId: this.puzzleMode.current?.puzzle?.id,
-		          attemptedCount: this.puzzleMode.attemptedCount,
-		          solvedCount: this.puzzleMode.solvedCount,
-		          streak: this.puzzleMode.streak,
-		          attemptedPuzzleIds: Object.fromEntries([...(this.puzzleMode.attemptedPuzzleIds || new Set())].map((id) => [id, true])),
 		        }),
 	      });
 	      
-	      if (response.ok) {
-	        const result = await response.json();
-	        // Update local state with server response
-		        if (result.ratingAfter !== undefined) {
-		          const beforeServerSync = Number(this.puzzleMode.rating) || Number(ratingBefore) || 1500;
-		          this.authState.profile = {
-		            ...(this.authState.profile || {}),
-		            puzzleRating: result.ratingAfter,
-		            puzzleStats: result.stats,
-		          };
-		          this._applyProfileToPuzzleMode(this.authState.profile);
-		          if (Math.round(beforeServerSync) !== Math.round(Number(result.ratingAfter))) {
-		            this._animatePuzzleRatingChange(beforeServerSync, Number(result.ratingAfter), Number(result.delta) || 0);
-		          }
-		        }
-	      } else {
-	        // Fallback: save directly if service fails
-	        const profile = {
+	      if (!response.ok) {
+	        const errorData = await response.json().catch(() => null);
+	        throw new Error(errorData?.error || `Puzzle rating update failed with ${response.status}`);
+	      }
+	      const result = await response.json();
+	      if (result.ratingAfter !== undefined) {
+	        this.authState.profile = {
 	          ...(this.authState.profile || {}),
-	          uid: user.uid,
-	          username: this.authState.profile?.username || user.displayName || (user.email ? user.email.split('@')[0] : 'Player'),
-	          email: user.email || this.authState.profile?.email || '',
-	          puzzleRating: this.puzzleMode.rating,
-		          puzzleStats: {
-		            solved: this.puzzleMode.solvedCount,
-		            attempted: this.puzzleMode.attemptedCount,
-		            streak: this.puzzleMode.streak,
-		          },
-		          attemptedPuzzleIds: Object.fromEntries([...(this.puzzleMode.attemptedPuzzleIds || new Set())].map((id) => [id, true])),
-		        };
-	        await this._saveUserProfile(profile);
+	          puzzleRating: result.ratingAfter,
+	          puzzleStats: result.stats,
+	        };
 	      }
 	      this._syncAccountUi();
-	    } catch (err) {
-	      console.error('Error persisting puzzle stats:', err);
-	      // Fallback: save directly to database
-	      const profile = {
-	        ...(this.authState.profile || {}),
-	        uid: user.uid,
-	        username: this.authState.profile?.username || user.displayName || (user.email ? user.email.split('@')[0] : 'Player'),
-	        email: user.email || this.authState.profile?.email || '',
-	        puzzleRating: this.puzzleMode.rating,
-	        puzzleStats: {
-	          solved: this.puzzleMode.solvedCount,
-	          attempted: this.puzzleMode.attemptedCount,
-	          streak: this.puzzleMode.streak,
-	        },
-	        attemptedPuzzleIds: Object.fromEntries([...(this.puzzleMode.attemptedPuzzleIds || new Set())].map((id) => [id, true])),
-	      };
-	      await this._saveUserProfile(profile);
-	      this._syncAccountUi();
-	    }
+	      return result;
+		    } catch (err) {
+		      console.error('Error persisting puzzle stats:', err);
+		      this._setPuzzleStatus(err.message || 'Could not update puzzle rating.', 'error');
+		      return null;
+		    }
 	  }
 
 	  _retryCurrentPuzzle() {
@@ -2262,8 +2274,9 @@ class ChessReviewApp {
 	      adjustment: 0,
 	      performanceEma: 0,
 	      mistakeRateEma: 0,
-	      thinking: false,
-      lastAdviceMoveIndex: null,
+		      thinking: false,
+		      gameOverCelebrated: false,
+	      lastAdviceMoveIndex: null,
 	      hintLevel: 0,
 	      hintFen: '',
 		      hintMove: '',
@@ -2655,9 +2668,13 @@ class ChessReviewApp {
       message = 'Draw. Nice hold.';
     }
 
-    this._setCoachDialog(message, 'Game Over');
-    this._syncCoachControls();
-    return true;
+	    this._setCoachDialog(message, 'Game Over');
+	    if (!this.coachMode.gameOverCelebrated) {
+	      this.coachMode.gameOverCelebrated = true;
+	      this._celebrate();
+	    }
+	    this._syncCoachControls();
+	    return true;
   }
 
   async _handleCoachHint() {
@@ -4440,101 +4457,118 @@ class ChessReviewApp {
 	    }
   }
 
-		  async _analyzeGameOnServer() {
-			    const reviewProfile = this._getReviewProfile();
-			    const positions = this.analyzer._positionsForMoves(this.gameMoves, this.initialFen);
-				    if (positions.length > 4) {
-			      return this._analyzeGameOnServerChunks(positions, reviewProfile);
-			    }
-		    this.elReviewBtnText.textContent = 'Sending to Server...';
-	    this.elProgressFill.style.width = '12%';
-	    const controller = new AbortController();
-		    const timeout = setTimeout(() => controller.abort(), 45000);
-	    let progress = 12;
-		    const progressTimer = setInterval(() => {
-		      progress = Math.min(progress + 3, 68);
-		      this.elProgressFill.style.width = `${progress}%`;
-		      this.elReviewBtnText.textContent = 'Server Reviewing...';
-		      this._updateLiveEvalPanel({
-		        busy: true,
-		        score: null,
-		        line: 'Server review is running.',
-			        meta: 'Keeping the review on the server.',
-			      });
-		    }, 1200);
-		    this._startReviewPlayback({
-		      start: 0,
-		      end: Math.max(0, this.gameMoves.length - 1),
-		      minDelay: 160,
-		      maxDelay: 820,
-		    });
-	
-		    let data = null;
-		    try {
-		      for (let attempt = 0; attempt < 4; attempt += 1) {
-		        let response;
-		        try {
-				  response = await fetch('/api/analyze', {
-		            method: 'POST',
-		            headers: { 'Content-Type': 'application/json' },
-		            signal: controller.signal,
-		            cache: 'no-store',
-		            body: JSON.stringify({
-		              moves: this.gameMoves,
-		              headers: this.gameHeaders || {},
-		              initialFen: this.initialFen,
+			  async _analyzeGameOnServer() {
+				    const reviewProfile = this._getReviewProfile();
+				    this.elReviewBtnText.textContent = 'Sending to Server...';
+		    this.elProgressFill.style.width = '8%';
+		    const controller = new AbortController();
+			    const timeout = setTimeout(() => controller.abort(), 180000);
+			    this._startReviewPlayback({
+			      start: 0,
+			      end: Math.max(0, this.gameMoves.length - 1),
+			      minDelay: 160,
+			      maxDelay: 820,
+			    });
+		
+			    try {
+			      const response = await fetch('/api/analyze/stream', {
+			        method: 'POST',
+			        headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+			        signal: controller.signal,
+			        cache: 'no-store',
+			        body: JSON.stringify({
+			          moves: this.gameMoves,
+			          headers: this.gameHeaders || {},
+			          initialFen: this.initialFen,
 			          profile: {
-			                key: reviewProfile.key,
-				              depth: 14,
-			                multiPv: 1,
-			                timeoutMs: 4500,
-			              },
-			            }),
-			          });
-		        } catch (err) {
-		          if (err.name === 'AbortError') {
-		            throw new Error('Server review timed out.');
-		          }
-		          throw err;
-		        }
-
-		        const text = await response.text().catch(() => '');
-		        try {
-		          data = text ? JSON.parse(text) : null;
-		        } catch (_err) {
-		          data = null;
-		        }
-
-		        if (response.ok && Array.isArray(data?.results)) break;
-
-		        const retryable = response.status >= 500 || response.status === 429 || data?.retryable;
-		        const message = data?.error || text || `Server analysis failed with ${response.status}`;
-		        if (!retryable || attempt === 3) throw new Error(message);
-
-		        const waitMs = 500 + (attempt * attempt * 450);
-		        this.elReviewBtnText.textContent = `Server retry ${attempt + 1}/3`;
-		        this._updateLiveEvalPanel({
-		          busy: true,
-		          score: null,
-		          line: 'Server review is retrying.',
-		          meta: message,
-		        });
-		        await new Promise((resolve) => setTimeout(resolve, waitMs));
-		      }
-		    } finally {
-		      clearInterval(progressTimer);
-		      clearTimeout(timeout);
-		    }
-
-		    this.elProgressFill.style.width = '78%';
-			    if (!Array.isArray(data?.results)) {
-			      throw new Error(data?.error || 'Server analysis returned no results.');
+			            key: reviewProfile.key,
+			            depth: 14,
+			            multiPv: 1,
+			            timeoutMs: 4500,
+			          },
+			        }),
+			      });
+			      if (!response.ok || !response.body) {
+			        const text = await response.text().catch(() => '');
+			        throw new Error(text || `Server analysis failed with ${response.status}`);
+			      }
+			      const data = await this._readServerAnalysisStream(response, controller.signal);
+			      this.elProgressFill.style.width = '100%';
+			      return this._serverAnalysisResultsFromData(data);
+			    } catch (err) {
+			      if (err.name === 'AbortError') throw new Error('Server review timed out.');
+			      throw err;
+			    } finally {
+			      clearTimeout(timeout);
 			    }
+				  }
 
-    this.elProgressFill.style.width = '100%';
-    const results = data.results.map((entry) => ({
-      ...entry,
-      classification: MoveClassification[entry.classificationKey] || MoveClassification.GOOD,
+				  async _readServerAnalysisStream(response, signal) {
+				    const reader = response.body.getReader();
+				    const decoder = new TextDecoder();
+				    let buffer = '';
+				    let finalData = null;
+				    const handleEvent = (raw) => {
+				      const lines = raw.split(/\r?\n/);
+				      let event = 'message';
+				      const dataLines = [];
+				      for (const line of lines) {
+				        if (line.startsWith('event:')) event = line.slice(6).trim();
+				        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+				      }
+				      if (!dataLines.length) return;
+				      const data = JSON.parse(dataLines.join('\n'));
+				      if (event === 'queued') {
+				        this.elReviewBtnText.textContent = 'Queued';
+				        this._updateLiveEvalPanel({
+				          busy: true,
+				          score: null,
+				          line: 'Server review is queued.',
+				          meta: `${data.queuedPosition || data.queued || 1} waiting`,
+				        });
+				      } else if (event === 'status') {
+				        this.elReviewBtnText.textContent = 'Reviewing Game';
+				      } else if (event === 'progress') {
+				        const completed = Math.max(0, Number(data.completed) || 0);
+				        const total = Math.max(1, Number(data.total) || 1);
+				        const pct = 10 + Math.round((completed / total) * 84);
+				        this.elProgressFill.style.width = `${clamp(pct, 10, 96)}%`;
+				        this.elReviewBtnText.textContent = 'Reviewing Game';
+				        this._sprintReviewPlaybackTo(completed - 1, { minDelay: 12, maxDelay: 58 });
+				        this._updateLiveEvalPanel({
+				          busy: true,
+				          score: null,
+				          line: 'Reviewing Game',
+				          meta: `${completed}/${total} positions`,
+				        });
+				      } else if (event === 'complete') {
+				        finalData = data;
+				      } else if (event === 'error') {
+				        throw new Error(data.error || 'Server analysis failed.');
+				      }
+				    };
+
+				    while (true) {
+				      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+				      const { value, done } = await reader.read();
+				      if (done) break;
+				      buffer += decoder.decode(value, { stream: true });
+				      const events = buffer.split(/\n\n/);
+				      buffer = events.pop() || '';
+				      for (const eventText of events) {
+				        if (eventText.trim()) handleEvent(eventText);
+				      }
+				    }
+				    buffer += decoder.decode();
+				    if (buffer.trim()) handleEvent(buffer);
+				    if (!Array.isArray(finalData?.results)) throw new Error('Server analysis returned no results.');
+				    return finalData;
+				  }
+
+				  _serverAnalysisResultsFromData(data) {
+	    const results = data.results.map((entry) => ({
+	      ...entry,
+	      classification: MoveClassification[entry.classificationKey] || MoveClassification.GOOD,
     }));
 	    results.opening = data.opening || this.analyzer.detectOpening(this.gameMoves);
 	    results.openingDrift = data.openingDrift || null;
@@ -4552,10 +4586,10 @@ class ChessReviewApp {
     results.whiteCaps = data.whiteCaps;
 	    results.blackCaps = data.blackCaps;
 			    results.phaseSummary = data.phaseSummary;
-			    if (data.publicStats) this._renderPublicStats(data.publicStats);
-			    results.statsRecorded = Boolean(data.publicStats);
-			    return results;
-			  }
+				    if (data.publicStats) this._renderPublicStats(data.publicStats);
+				    results.statsRecorded = Boolean(data.publicStats);
+				    return results;
+				  }
 
 				  _isServerChunkResourceError(err) {
 				    const message = String(err?.message || err || '');
@@ -5071,9 +5105,10 @@ class ChessReviewApp {
 	    this.elCriticalList.innerHTML = '';
 	    this._clearReviewExtras();
 	    this._setCoachDialog('Best-line explorer loaded. Play your next move and the coach will answer.', 'Explorer');
-	    this.coachMode.active = true;
-	    this.coachMode.humanColor = this.chess.turn();
-	    this.coachMode.thinking = false;
+		    this.coachMode.active = true;
+		    this.coachMode.humanColor = this.chess.turn();
+		    this.coachMode.thinking = false;
+		    this.coachMode.gameOverCelebrated = false;
 	    this._syncCoachVisibility();
 	    this._syncCoachControls();
 	    this.board.setChessInstance(this.chess);
