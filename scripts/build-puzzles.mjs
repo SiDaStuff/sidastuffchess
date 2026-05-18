@@ -8,9 +8,10 @@ import { fileURLToPath } from 'url';
 import { pipeline } from 'stream/promises';
 import { createInterface } from 'readline';
 import { createRequire } from 'module';
-import Chess from 'chess.js';
 
 const require = createRequire(import.meta.url);
+const chessModule = require('chess.js');
+const Chess = chessModule.Chess || chessModule;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const dataDir = path.join(rootDir, 'server', 'data');

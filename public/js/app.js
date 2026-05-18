@@ -144,6 +144,9 @@ class ChessReviewApp {
 		    this.elBtnMenuPuzzles = document.getElementById('btn-menu-puzzles');
 		    this.elBtnMenuAnticheat = document.getElementById('btn-menu-anticheat');
 		    this.elBtnMenuBoost = document.getElementById('btn-menu-boost');
+    this.elBoostPage = document.getElementById('boost-page');
+    this.elBtnBoostPurchase = document.getElementById('btn-boost-purchase');
+    this.elBtnCloseBoost = document.getElementById('btn-close-boost');
     this.elBtnBackMenu = document.getElementById('btn-back-menu');
     this.elEngineChoiceModal = document.getElementById('engine-choice-modal');
     this.elEngineChoiceClose = document.getElementById('engine-choice-close');
@@ -432,7 +435,10 @@ class ChessReviewApp {
 		    }
 
 		    if (route === '/account') {
-		      this._showAccountModal();
+		      // Only show account modal if not already signed in
+		      if (!this.authState.user) {
+		        this._showAccountModal();
+		      }
 		      window.history.replaceState({}, '', '/index');
 		      return;
 		    }
@@ -1281,6 +1287,9 @@ class ChessReviewApp {
 	    this.elBtnMenuCoach?.addEventListener('click', () => this._navigateTo('/coach'));
 	    this.elBtnMenuPuzzles?.addEventListener('click', () => this._navigateTo('/puzzles'));
 	    this.elBtnMenuAnticheat?.addEventListener('click', () => this._navigateTo('/anticheat'));
+    this.elBtnMenuBoost?.addEventListener('click', () => this._showBoostPage());
+    this.elBtnCloseBoost?.addEventListener('click', () => this._closeBoostPage());
+    this.elBtnBoostPurchase?.addEventListener('click', () => this._handleBoostPurchase());
     this.elBtnBackMenu?.addEventListener('click', () => this._navigateTo('/index'));
     this.elEngineChoiceClose?.addEventListener('click', () => this._hideEngineChoiceModal());
     this.elEngineChoiceModal?.addEventListener('click', (e) => {

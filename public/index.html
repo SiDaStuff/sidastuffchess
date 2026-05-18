@@ -38,6 +38,10 @@
 		          <span class="material-symbols-outlined btn-symbol">shield</span>
 			          <span>Anticheat</span>
 			        </button>
+		        <button id="btn-menu-boost" class="menu-button" style="position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%);">
+		          <span class="material-symbols-outlined btn-symbol" style="color: #667eea;">card_membership</span>
+		          <span style="background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-weight: 700;">Get Boost</span>
+		        </button>
 		      </div>
 		      <div class="public-stats stats-loading" id="public-stats" aria-label="Public site stats">
 		        <div class="public-stat">
@@ -58,6 +62,75 @@
 		        <span>Server review</span>
 		      </div>
 	    </section>
+
+    <!-- Boost Page Overlay -->
+    <section id="boost-page" class="main-menu" aria-label="Boost upgrade page" hidden>
+      <div class="main-menu-brand" aria-hidden="true">
+        <span style="font-size: 2.2rem; margin-bottom: 8px;">✨</span>
+        <span>Unlock Boost</span>
+        <small>Unlimited reviews & priority queue</small>
+      </div>
+      <div class="boost-comparison">
+        <table class="plan-table">
+          <thead>
+            <tr>
+              <th>Feature</th>
+              <th><span class="plan-badge free">Free</span></th>
+              <th><span class="plan-badge boost">Boost</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Server reviews / day</td>
+              <td>3</td>
+              <td><strong>Unlimited</strong></td>
+            </tr>
+            <tr>
+              <td>Anticheat runs / day</td>
+              <td>1</td>
+              <td><strong>Unlimited</strong></td>
+            </tr>
+            <tr>
+              <td>Priority queue</td>
+              <td>—</td>
+              <td><strong>Yes</strong></td>
+            </tr>
+            <tr>
+              <td>Analysis depth</td>
+              <td>Depth 14</td>
+              <td><strong>Depth 14+</strong></td>
+            </tr>
+            <tr>
+              <td>Toggle Stockfish version</td>
+              <td>—</td>
+              <td><strong>Yes</strong></td>
+            </tr>
+            <tr>
+              <td>Game coach</td>
+              <td>Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <td>Puzzles</td>
+              <td>Yes</td>
+              <td>Yes</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="boost-pricing">
+        <button id="btn-boost-purchase" class="menu-button menu-button-primary" style="min-width: 200px; font-size: 1.1rem; padding: 16px 24px;">
+          <span class="material-symbols-outlined btn-symbol" style="font-size: 1.4rem;">card_membership</span>
+          <span>Get Boost</span>
+        </button>
+        <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 12px;">
+          Or continue free with limited daily reviews
+        </p>
+      </div>
+      <button id="btn-close-boost" class="menu-button" style="position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); min-width: 120px;">
+        <span>Close</span>
+      </button>
+    </section>
 
     <!-- Header -->
     <header class="header">
@@ -710,9 +783,12 @@
                   <span class="btn-label">Sign In</span>
                 </span>
               </button>
-              <button id="btn-google-auth" class="btn btn-secondary" type="button">
+              <button id="btn-google-auth" class="btn btn-google" type="button">
                 <span class="btn-content">
-                  <span class="material-symbols-outlined btn-symbol">account_circle</span>
+                  <svg class="btn-google-icon" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
+                    <path d="M12 7v5l4 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
                   <span class="btn-label">Continue with Google</span>
                 </span>
               </button>

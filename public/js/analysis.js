@@ -1134,6 +1134,7 @@ class MoveAnalyzer {
 			    const beforeExpected = this.expectedPoints(playerEdgeBefore, playerRating);
 			    const afterExpected = this.expectedPoints(playerEdgeAfter, playerRating);
 			    const tolerance = this._reviewTolerance(playerRating, timeControl);
+			    const isInForcedMate = playerEdgeBefore <= -9000;
 			    const losingOnOpponentMove = opponentMateAfter
 			      || playerEdgeAfter <= -120
 			      || afterExpected <= 0.38;
@@ -1216,6 +1217,8 @@ class MoveAnalyzer {
 
 		    if (opponentMateAfter) {
 		      if (isBestMove) return MoveClassification.MISTAKE;
+		      // In forced mate, don't mark as blunder—only as mistake/inaccuracy
+		      if (isInForcedMate && playerEdgeAfter <= playerEdgeBefore + 100) return MoveClassification.MISTAKE;
 		      return cpLoss >= 120 || playerEdgeAfter <= -9000
 		        ? MoveClassification.BLUNDER
 		        : MoveClassification.MISTAKE;
@@ -1249,10 +1252,12 @@ class MoveAnalyzer {
 	    });
 
 			    if (expectedLoss > 0.20 * tolerance || effectiveCpLoss >= 320 * tolerance) {
+			      if (isInForcedMate) return MoveClassification.MISTAKE;
 			      return (losingOnOpponentMove && losesMaterialOrGame) ? MoveClassification.BLUNDER : MoveClassification.MISTAKE;
 			    }
 			    if (losesMaterialOrGame && (expectedLoss > 0.14 * tolerance || effectiveCpLoss >= 220 * tolerance)) {
 			      if (isBestMove) return expectedLoss > 0.18 * tolerance ? MoveClassification.MISTAKE : MoveClassification.INACCURACY;
+			      if (isInForcedMate) return MoveClassification.MISTAKE;
 			      return MoveClassification.BLUNDER;
 			    }
 		    if (expectedLoss > 0.10 * tolerance || effectiveCpLoss >= 155 * tolerance) return MoveClassification.MISTAKE;
