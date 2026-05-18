@@ -2,14 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const initStockfish = require('stockfish');
 
-function stockfishEnginePath() {
+function stockfishEnginePath(preferFull = false) {
   let packageRoot = '';
   try {
     packageRoot = path.dirname(require.resolve('stockfish/package.json'));
   } catch (_err) {
     packageRoot = path.resolve(process.cwd(), 'node_modules/stockfish');
   }
-  const preferFullEngine = String(process.env.SERVER_STOCKFISH_ENGINE || '').toLowerCase() === 'full';
+  const preferFullEngine = preferFull || String(process.env.SERVER_STOCKFISH_ENGINE || '').toLowerCase() === 'full';
   const engineFiles = preferFullEngine
     ? ['stockfish-18-single.js', 'stockfish-18-lite-single.js']
     : ['stockfish-18-lite-single.js', 'stockfish-18-single.js'];
@@ -33,17 +33,18 @@ function stockfishEnginePath() {
 }
 
 class ServerStockfishEngine {
-  constructor() {
+  constructor(options = {}) {
     this.engine = null;
     this.ready = false;
       this.handlers = [];
       this.history = [];
       this.activeSearch = null;
-      this.currentMultiPv = 1;
+	      this.currentMultiPv = 1;
+	      this.preferFull = !!options.preferFull;
   }
 
     async init() {
-      const enginePath = stockfishEnginePath();
+      const enginePath = stockfishEnginePath(this.preferFull);
       delete require.cache[require.resolve(enginePath)];
       this.engine = await initStockfish(enginePath);
     this.engine.listener = (line) => this._handleLine(line);

@@ -13,8 +13,8 @@ const SERVER_REVIEW_PROFILE = {
 const SERVER_POSITION_BATCH_LIMIT = 8;
 const SERVER_ACTIVE_ANALYSIS_LIMIT = 5;
 
-let cachedEngine = null;
-let cachedEngineInit = null;
+const cachedEngines = new Map();
+const cachedEngineInits = new Map();
 let engineChain = Promise.resolve();
 let activeAnalysisJobs = 0;
 const analysisQueue = [];
@@ -75,23 +75,37 @@ function withTimeout(promise, timeoutMs, message) {
   });
 }
 
-async function getServerEngine() {
+async function getServerEngine(preferFull = false) {
+  const key = preferFull ? 'full' : 'lite';
+  const cachedEngine = cachedEngines.get(key);
   if (cachedEngine?.ready) return cachedEngine;
-  if (!cachedEngineInit) {
-    cachedEngine = new ServerStockfishEngine();
-    cachedEngineInit = cachedEngine.init().catch((err) => {
+  if (!cachedEngineInits.has(key)) {
+    const engine = new ServerStockfishEngine({ preferFull });
+    cachedEngines.set(key, engine);
+    cachedEngineInits.set(key, engine.init().catch((err) => {
       try {
-        cachedEngine?.destroy();
+        engine?.destroy();
       } catch (_destroyErr) {
         // Ignore teardown failures after a failed init.
       }
-      cachedEngine = null;
-      cachedEngineInit = null;
+      cachedEngines.delete(key);
+      cachedEngineInits.delete(key);
       throw err;
-    });
+    }));
   }
-  await cachedEngineInit;
-  return cachedEngine;
+  await cachedEngineInits.get(key);
+  return cachedEngines.get(key);
+}
+
+function resetServerEngine(preferFull = false) {
+  const key = preferFull ? 'full' : 'lite';
+  try {
+    cachedEngines.get(key)?.destroy();
+  } catch (_destroyErr) {
+    // Ignore teardown while recovering.
+  }
+  cachedEngines.delete(key);
+  cachedEngineInits.delete(key);
 }
 
 function withEngineQueue(work) {
@@ -198,8 +212,9 @@ exports.handler = async (event, context = {}) => {
 
       const Chess = loadChess();
         const { MoveAnalyzer } = loadAnalyzer();
-      const analyzer = new MoveAnalyzer();
-      const profile = payload.profile || {};
+	      const analyzer = new MoveAnalyzer();
+	      const profile = payload.profile || {};
+      const preferFullServer = quotaState.plan?.plan === 'boost' && profile.serverEngine === 'full';
       analyzer.setReviewProfile({
         depth: SERVER_REVIEW_PROFILE.depth,
         multiPv: Math.max(1, Math.min(Number(profile.multiPv) || SERVER_REVIEW_PROFILE.multiPv, 2)),
@@ -217,7 +232,7 @@ exports.handler = async (event, context = {}) => {
     try {
       return await withAnalysisSlot(async () => {
         const engine = await withTimeout(
-          getServerEngine(),
+	          getServerEngine(preferFullServer),
           8000,
           'Server engine is still warming up.'
         );
@@ -289,13 +304,8 @@ exports.handler = async (event, context = {}) => {
   } catch (err) {
     console.error('Server analysis failed:', err);
     if (/cancelled|not ready|timed out waiting|out of memory|abort/i.test(String(err?.message || err))) {
-      try {
-        cachedEngine?.destroy();
-      } catch (_destroyErr) {
-        // Ignore teardown failures while recovering the cached engine.
-      }
-      cachedEngine = null;
-      cachedEngineInit = null;
+      resetServerEngine(false);
+      resetServerEngine(true);
     }
     return retryable(err.message || 'Server analysis failed.');
   }
@@ -359,8 +369,9 @@ exports.streamHandler = async (req, res) => {
       sseWrite(res, 'status', { message: 'started', queue: slotStatus });
       const Chess = loadChess();
       const { MoveAnalyzer } = loadAnalyzer();
-      const analyzer = new MoveAnalyzer();
-      const profile = payload.profile || {};
+	      const analyzer = new MoveAnalyzer();
+	      const profile = payload.profile || {};
+      const preferFullServer = quotaState.plan?.plan === 'boost' && profile.serverEngine === 'full';
       analyzer.setReviewProfile({
         depth: SERVER_REVIEW_PROFILE.depth,
         multiPv: Math.max(1, Math.min(Number(profile.multiPv) || SERVER_REVIEW_PROFILE.multiPv, 2)),
@@ -373,7 +384,7 @@ exports.streamHandler = async (req, res) => {
         if (!validation.load(initialFen)) throw new Error('Invalid initial FEN.');
       }
 
-      const engine = await withTimeout(getServerEngine(), 8000, 'Server engine is still warming up.');
+      const engine = await withTimeout(getServerEngine(preferFullServer), 8000, 'Server engine is still warming up.');
       const reviewEngine = cachedEngineAdapter(engine);
       const positions = analyzer._positionsForMoves(moves, initialFen);
       const evals = [];
@@ -443,9 +454,13 @@ exports.streamHandler = async (req, res) => {
     }, (queue) => {
       sseWrite(res, 'queued', queue);
     });
-  } catch (err) {
-    console.error('Server stream analysis failed:', err);
-    sseWrite(res, 'error', { error: err.message || 'Server analysis failed.' });
+	  } catch (err) {
+	    console.error('Server stream analysis failed:', err);
+    if (/cancelled|not ready|timed out waiting|out of memory|abort/i.test(String(err?.message || err))) {
+      resetServerEngine(false);
+      resetServerEngine(true);
+    }
+	    sseWrite(res, 'error', { error: err.message || 'Server analysis failed.' });
   } finally {
     res.end();
   }

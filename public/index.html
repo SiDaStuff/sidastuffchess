@@ -34,9 +34,13 @@
 	          <span class="material-symbols-outlined btn-symbol">extension</span>
 		          <span>Puzzles</span>
 		        </button>
-	        <button id="btn-menu-anticheat" class="menu-button">
-	          <span class="material-symbols-outlined btn-symbol">shield</span>
-		          <span>Anticheat</span>
+		        <button id="btn-menu-anticheat" class="menu-button">
+		          <span class="material-symbols-outlined btn-symbol">shield</span>
+			          <span>Anticheat</span>
+			        </button>
+		        <button id="btn-menu-boost" class="menu-button">
+		          <span class="material-symbols-outlined btn-symbol">bolt</span>
+		          <span>Boost</span>
 		        </button>
 		      </div>
 		      <div class="public-stats stats-loading" id="public-stats" aria-label="Public site stats">
@@ -253,6 +257,37 @@
 	            </div>
 	          </div>
 	        </div>
+
+        <div class="server-boost-toggle panel-wide" id="server-boost-toggle" hidden>
+          <label class="switch-row">
+            <span>
+              <strong>Stronger server review</strong>
+              <small>Boost only. Use Stockfish 18 server review at depth 14.</small>
+            </span>
+            <input id="server-strong-review" type="checkbox">
+          </label>
+        </div>
+
+        <section class="boost-page card panel-wide" id="boost-page" hidden>
+          <div class="boost-hero">
+            <div>
+              <span class="boost-pill">Boost</span>
+              <h2>More server power for review and anticheat</h2>
+              <p>Boost removes daily server limits, unlocks stronger Stockfish 18 server review, and keeps the purple Boost theme on your account.</p>
+            </div>
+            <button id="btn-boost-account" class="btn btn-primary" type="button">
+              <span class="btn-content">
+                <span class="material-symbols-outlined btn-symbol">account_circle</span>
+                <span class="btn-label">Open Account</span>
+              </span>
+            </button>
+          </div>
+          <div class="boost-features">
+            <div><strong>Unlimited</strong><span>Server game reviews</span></div>
+            <div><strong>Unlimited</strong><span>Server anticheat runs</span></div>
+            <div><strong>Stockfish 18</strong><span>Stronger server review depth 14</span></div>
+          </div>
+        </section>
 
         <!-- Review Button -->
         <button id="btn-review" class="btn btn-review panel-wide" disabled>
@@ -554,7 +589,7 @@
         </div>
         <div class="modal-body">
 	          <div class="engine-form">
-	            <label class="field engine-source-field">
+	            <label class="field engine-source-field" hidden>
 	              <span class="field-label">Source</span>
 	              <select id="engine-source" class="input-select">
 	                <option value="browser">Browser</option>
@@ -574,15 +609,25 @@
                 <option value="depth26">Depth 26</option>
               </select>
             </label>
-            <label class="field">
-              <span class="field-label">Review Location</span>
-              <select id="analysis-location" class="input-select">
-	                <option value="browser">Browser</option>
-                  <option value="server" selected>Server</option>
-              </select>
-            </label>
-          </div>
-	          <p class="modal-help">Coach ELO only controls how the coach plays. Analysis Depth controls the feedback quality.</p>
+	            <label class="field">
+	              <span class="field-label">Maximum Time</span>
+	              <select id="engine-max-time" class="input-select">
+	                <option value="4000">4 seconds</option>
+	                <option value="8000">8 seconds</option>
+	                <option value="12000" selected>12 seconds</option>
+	                <option value="20000">20 seconds</option>
+	                <option value="30000">30 seconds</option>
+	              </select>
+	            </label>
+	            <label class="field">
+	              <span class="field-label">Review Location</span>
+	              <select id="analysis-location" class="input-select">
+		                <option value="browser">Browser</option>
+	                  <option value="server" selected>Server</option>
+	              </select>
+	            </label>
+	          </div>
+		          <p class="modal-help">These browser settings apply to browser review, coach, live eval, and browser anticheat.</p>
         </div>
       </div>
     </div>

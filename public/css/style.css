@@ -2032,6 +2032,98 @@ body[data-mode="puzzle"] .eval-graph-card {
   color: #6d28d9;
 }
 
+.server-boost-toggle {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.server-boost-toggle[hidden],
+.boost-page[hidden] {
+  display: none;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #c4b5fd;
+  border-radius: 8px;
+  background: #f5f3ff;
+}
+
+.switch-row span {
+  display: grid;
+  gap: 2px;
+}
+
+.switch-row small {
+  color: var(--text-muted);
+}
+
+.switch-row input {
+  width: 44px;
+  height: 24px;
+  accent-color: #7c3aed;
+}
+
+.boost-page {
+  padding: 22px;
+}
+
+.boost-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.boost-pill {
+  display: inline-flex;
+  margin-bottom: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ede9fe;
+  color: #5b21b6;
+  font-weight: 700;
+}
+
+.boost-hero h2 {
+  margin: 0 0 8px;
+}
+
+.boost-hero p {
+  margin: 0;
+  color: var(--text-muted);
+  max-width: 680px;
+}
+
+.boost-features {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.boost-features div {
+  padding: 14px;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.boost-features strong,
+.boost-features span {
+  display: block;
+}
+
+.boost-features span {
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
 .account-usage {
   margin: 10px 0 0;
   color: var(--text-muted);
@@ -3028,12 +3120,18 @@ body[data-mode="puzzle"] .eval-graph-card {
 	    grid-template-columns: 1fr;
 	  }
 
-  .puzzle-controls,
-  .puzzle-meta-grid,
-  .auth-actions,
-  .account-stats {
-    grid-template-columns: 1fr;
-  }
+	  .puzzle-controls,
+	  .puzzle-meta-grid,
+	  .auth-actions,
+	  .boost-features,
+	  .account-stats {
+	    grid-template-columns: 1fr;
+	  }
+
+	  .boost-hero {
+	    align-items: stretch;
+	    flex-direction: column;
+	  }
 
   .public-stats {
     grid-template-columns: 1fr;

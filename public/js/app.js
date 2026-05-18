@@ -6,11 +6,13 @@ class ChessReviewApp {
     this.analyzer = new MoveAnalyzer();
     this.chess = new Chess();
 		this.engineSettings = {
-			source: 'browser',
-			module: 'full-single',
-					strength: 'depth14',
-					analysisLocation: 'server',
-		};
+				source: 'browser',
+				module: 'lite-single',
+						strength: 'depth14',
+						maxTimeMs: 12000,
+						analysisLocation: 'server',
+						serverStrongReview: false,
+			};
 	    this.engineSettings.module = this._recommendedEngineModule();
     this.engineInitToken = 0;
     this.liveEvalToken = 0;
@@ -139,8 +141,9 @@ class ChessReviewApp {
 	    this.elStatsPuzzlesSolved = document.getElementById('stats-puzzles-solved');
 	    this.elBtnMenuImport = document.getElementById('btn-menu-import');
 	    this.elBtnMenuCoach = document.getElementById('btn-menu-coach');
-	    this.elBtnMenuPuzzles = document.getElementById('btn-menu-puzzles');
-	    this.elBtnMenuAnticheat = document.getElementById('btn-menu-anticheat');
+		    this.elBtnMenuPuzzles = document.getElementById('btn-menu-puzzles');
+		    this.elBtnMenuAnticheat = document.getElementById('btn-menu-anticheat');
+		    this.elBtnMenuBoost = document.getElementById('btn-menu-boost');
     this.elBtnBackMenu = document.getElementById('btn-back-menu');
     this.elEngineChoiceModal = document.getElementById('engine-choice-modal');
     this.elEngineChoiceClose = document.getElementById('engine-choice-close');
@@ -184,7 +187,12 @@ class ChessReviewApp {
     this.elEngineSource = document.getElementById('engine-source');
     this.elEngineModule = document.getElementById('engine-module');
     this.elEngineStrength = document.getElementById('engine-strength');
-    this.elAnalysisLocation = document.getElementById('analysis-location');
+    this.elEngineMaxTime = document.getElementById('engine-max-time');
+	    this.elAnalysisLocation = document.getElementById('analysis-location');
+	    this.elServerBoostToggle = document.getElementById('server-boost-toggle');
+	    this.elServerStrongReview = document.getElementById('server-strong-review');
+	    this.elBoostPage = document.getElementById('boost-page');
+	    this.elBtnBoostAccount = document.getElementById('btn-boost-account');
     this.elEngineLoadProgress = document.getElementById('engine-load-progress');
     this.elEngineLoadProgressFill = document.getElementById('engine-load-progress-fill');
     this.elReviewSummary = document.getElementById('review-summary');
@@ -316,15 +324,19 @@ class ChessReviewApp {
 	  }
 
   _initEngineControls() {
-    this.elEngineSource.value = this.engineSettings.source;
-    this.elEngineStrength.value = this.engineSettings.strength;
-    if (this.elAnalysisLocation) this.elAnalysisLocation.value = this.engineSettings.analysisLocation;
-    this._populateEngineModules();
-  }
-
-	  _getReviewProfile() {
-	    return getReviewProfileConfig(this.engineSettings.strength);
+	    this.elEngineSource.value = this.engineSettings.source;
+	    this.elEngineStrength.value = this.engineSettings.strength;
+	    if (this.elEngineMaxTime) this.elEngineMaxTime.value = String(this.engineSettings.maxTimeMs);
+	    if (this.elAnalysisLocation) this.elAnalysisLocation.value = this.engineSettings.analysisLocation;
+	    if (this.elServerStrongReview) this.elServerStrongReview.checked = !!this.engineSettings.serverStrongReview;
+	    this._populateEngineModules();
 	  }
+	
+		  _getReviewProfile() {
+		    const profile = { ...getReviewProfileConfig(this.engineSettings.strength) };
+		    profile.timeoutMs = Math.max(1000, Number(this.engineSettings.maxTimeMs) || profile.timeoutMs);
+		    return profile;
+		  }
 
 		  _showPopup(options = {}) {
 			    const config = {
@@ -380,7 +392,7 @@ class ChessReviewApp {
 		      return;
 		    }
 
-		    if (route === '/anticheat') {
+			    if (route === '/anticheat') {
 		      this._hideSettingsModal();
 		      this._hideAccountModal();
 		      this._enterAnticheatMode();
@@ -608,6 +620,65 @@ class ChessReviewApp {
 		    return token ? { ...extra, Authorization: `Bearer ${token}` } : { ...extra };
 		  }
 
+		  _normalizePlayerName(value) {
+		    return String(value || '').trim().toLowerCase();
+		  }
+
+		  _sideForUsername(headers, username) {
+		    const target = this._normalizePlayerName(username);
+		    if (!target) return null;
+		    if (this._normalizePlayerName(headers.White) === target) return 'white';
+		    if (this._normalizePlayerName(headers.Black) === target) return 'black';
+		    return null;
+		  }
+
+		  _isOutOfUsage(kind) {
+		    if (this.authState.plan?.plan === 'boost') return false;
+		    const usage = this.authState.usage || {};
+		    const limits = this.authState.limits || {};
+		    if (kind === 'anticheat') {
+		      return Math.max(0, Number(usage.anticheat) || 0) >= Math.max(1, Number(limits.anticheatRunsPerDay) || 1);
+		    }
+		    return Math.max(0, Number(usage.serverReviews) || 0) >= Math.max(1, Number(limits.serverReviewsPerDay) || 3);
+		  }
+
+		  async _refreshUsageBeforeAction() {
+		    if (!this.authState.user) return;
+		    try {
+		      await this._refreshMe();
+		    } catch (_err) {
+		      // Continue with the last known usage; the server still enforces the limit.
+		    }
+		  }
+
+		  async _showUsageLimitPopup(kind) {
+		    const isReview = kind === 'serverReviews';
+		    const title = isReview ? 'You are out of server reviews!' : 'You are out of server anticheat runs!';
+		    const text = isReview
+		      ? 'Do you want to review in browser or buy Boost?'
+		      : 'Do you want to run anticheat in browser or buy Boost?';
+		    if (window.Swal?.fire) {
+		      const result = await window.Swal.fire({
+		        icon: 'warning',
+		        title,
+		        text,
+		        confirmButtonText: isReview ? 'Review in browser' : 'Run in browser',
+		        denyButtonText: 'Buy Boost',
+		        cancelButtonText: 'Cancel',
+		        showDenyButton: true,
+		        showCancelButton: true,
+		        confirmButtonColor: '#202721',
+		        denyButtonColor: '#7c3aed',
+		      });
+		      if (result.isDenied) {
+		        this._navigateTo('/boost');
+		        return 'boost';
+		      }
+		      return result.isConfirmed ? 'browser' : 'cancel';
+		    }
+		    return window.confirm(`${title}\n${text}`) ? 'browser' : 'cancel';
+		  }
+
 	  async _saveUserProfile(profile = this.authState.profile) {
 	    const user = this.authState.user;
 	    if (!user || !profile) return;
@@ -714,7 +785,10 @@ class ChessReviewApp {
 		      this.elAccountBtnLabel.textContent = signedIn ? (profile.username || user.displayName || 'Account') : 'Account';
 		    }
 		    if (!signedIn && this.elAdminBoostPanel) this.elAdminBoostPanel.hidden = true;
-		    if (!signedIn) return;
+		    if (!signedIn) {
+		      this._syncServerStrongToggle();
+		      return;
+		    }
 	
 		    const stats = profile.puzzleStats || {};
 		    const plan = this.authState.plan || { name: 'Free', plan: 'free' };
@@ -740,6 +814,7 @@ class ChessReviewApp {
 		      }
 		    }
 		    if (this.elAdminBoostPanel) this.elAdminBoostPanel.hidden = !this.authState.isAdmin;
+		    this._syncServerStrongToggle();
 		  }
 
 	  _setAuthMode(mode) {
@@ -908,11 +983,43 @@ class ChessReviewApp {
 	    if (this.elPuzzleCard) this.elPuzzleCard.hidden = !this.puzzleMode.active;
 	  }
 
-	  _syncAnticheatVisibility() {
-	    if (this.elAnticheatCard) this.elAnticheatCard.hidden = !this.anticheatMode.active;
-	  }
+		  _syncAnticheatVisibility() {
+		    if (this.elAnticheatCard) this.elAnticheatCard.hidden = !this.anticheatMode.active;
+		  }
 
-	  _enterAnticheatMode() {
+		  _syncBoostPageVisibility() {
+		    if (this.elBoostPage) this.elBoostPage.hidden = document.body.dataset.mode !== 'boost';
+		  }
+
+		  _syncServerStrongToggle() {
+		    const isBoost = this.authState.plan?.plan === 'boost';
+		    const show = isBoost && this.engineSettings.analysisLocation === 'server' && document.body.dataset.mode === 'review';
+		    if (this.elServerBoostToggle) this.elServerBoostToggle.hidden = !show;
+		    if (!isBoost && this.elServerStrongReview) {
+		      this.elServerStrongReview.checked = false;
+		      this.engineSettings.serverStrongReview = false;
+		    }
+		  }
+
+		  _enterBoostPage() {
+		    document.body.classList.remove('menu-active');
+		    document.body.dataset.mode = 'boost';
+		    this.puzzleMode.active = false;
+		    this.anticheatMode.active = false;
+		    if (this.coachMode.active) {
+		      this.coachMode.active = false;
+		      this.coachMode.thinking = false;
+		      this._syncCoachControls();
+		    }
+		    if (this.elLiveEval) this.elLiveEval.hidden = true;
+		    if (this.elReviewSummary) this.elReviewSummary.style.display = 'none';
+		    this._syncPuzzleVisibility();
+		    this._syncAnticheatVisibility();
+		    this._syncBoostPageVisibility();
+		    this._syncServerStrongToggle();
+		  }
+
+		  _enterAnticheatMode() {
 	    document.body.classList.remove('menu-active');
 	    document.body.dataset.mode = 'anticheat';
 	    this.liveEvalToken += 1;
@@ -929,8 +1036,9 @@ class ChessReviewApp {
 	    this.elMoveBadge.style.display = 'none';
 	    this._syncCoachVisibility();
 	    this._syncPuzzleVisibility();
-	    this._syncAnticheatVisibility();
-	    this._syncAnticheatForm();
+		    this._syncAnticheatVisibility();
+		    this._syncBoostPageVisibility();
+		    this._syncAnticheatForm();
 	    this._syncActionButtons();
 	  }
 
@@ -981,9 +1089,10 @@ class ChessReviewApp {
 
 				  _bindEvents() {
     this.elBtnMenuImport?.addEventListener('click', () => this._navigateTo('/review'));
-    this.elBtnMenuCoach?.addEventListener('click', () => this._navigateTo('/coach'));
-    this.elBtnMenuPuzzles?.addEventListener('click', () => this._navigateTo('/puzzles'));
-    this.elBtnMenuAnticheat?.addEventListener('click', () => this._navigateTo('/anticheat'));
+	    this.elBtnMenuCoach?.addEventListener('click', () => this._navigateTo('/coach'));
+	    this.elBtnMenuPuzzles?.addEventListener('click', () => this._navigateTo('/puzzles'));
+	    this.elBtnMenuAnticheat?.addEventListener('click', () => this._navigateTo('/anticheat'));
+	    this.elBtnMenuBoost?.addEventListener('click', () => this._navigateTo('/boost'));
     this.elBtnBackMenu?.addEventListener('click', () => this._navigateTo('/index'));
     this.elEngineChoiceClose?.addEventListener('click', () => this._hideEngineChoiceModal());
     this.elEngineChoiceModal?.addEventListener('click', (e) => {
@@ -1052,11 +1161,17 @@ class ChessReviewApp {
 	    this.elBtnReset.addEventListener('click', () => this._resetGame());
     this.elEngineSource.addEventListener('change', () => this._handleEngineSourceChange());
 	    this.elEngineModule.addEventListener('change', () => this._handleEngineModuleChange());
-    this.elEngineStrength.addEventListener('change', () => this._handleEngineStrengthChange());
-    this.elAnalysisLocation?.addEventListener('change', () => {
-      this.engineSettings.analysisLocation = this.elAnalysisLocation.value;
-      this._renderIdleEngineInfo();
-    });
+	    this.elEngineStrength.addEventListener('change', () => this._handleEngineStrengthChange());
+	    this.elEngineMaxTime?.addEventListener('change', () => this._handleEngineMaxTimeChange());
+	    this.elAnalysisLocation?.addEventListener('change', () => {
+	      this.engineSettings.analysisLocation = this.elAnalysisLocation.value;
+	      this._syncServerStrongToggle();
+	      this._renderIdleEngineInfo();
+	    });
+	    this.elServerStrongReview?.addEventListener('change', () => {
+	      this.engineSettings.serverStrongReview = this.elServerStrongReview.checked;
+	    });
+	    this.elBtnBoostAccount?.addEventListener('click', () => this._showAccountModal());
 
     this.elBtnFlip.addEventListener('click', () => this.board.flip());
     this.elBtnFirst.addEventListener('click', () => this._goToMove(-1));
@@ -1095,16 +1210,18 @@ class ChessReviewApp {
 		    this.anticheatMode.active = false;
 		    this._syncPuzzleVisibility();
 		    this._syncAnticheatVisibility();
+		    this._syncBoostPageVisibility();
 		    if (this.elLiveEval) this.elLiveEval.hidden = false;
 	    if (this.coachMode.active) {
 	      this.coachMode.active = false;
 	      this.coachMode.thinking = false;
 	      this.board.clearBestMoveArrow();
 	      this._syncCoachControls();
-	    }
-	    this._syncActionButtons();
-	    this._updateCurrentMoveIndicator();
-	  }
+		    }
+		    this._syncServerStrongToggle();
+		    this._syncActionButtons();
+		    this._updateCurrentMoveIndicator();
+		  }
 
 	  _enterCoachMode(options = null) {
 	    document.body.classList.remove('menu-active');
@@ -1145,15 +1262,16 @@ class ChessReviewApp {
 		    this.coachMode.active = false;
 		    this.coachMode.thinking = false;
 		    this.puzzleMode.active = false;
-		    this.anticheatMode.active = false;
-		    this.board.clearLoading();
-		    this.board.clearBestMoveArrow();
-		    this._syncCoachVisibility();
-		    this._syncPuzzleVisibility();
-		    this._syncAnticheatVisibility();
-	    document.body.classList.add('menu-active');
-	    delete document.body.dataset.mode;
-	  }
+			    this.anticheatMode.active = false;
+			    this.board.clearLoading();
+			    this.board.clearBestMoveArrow();
+		    delete document.body.dataset.mode;
+			    this._syncCoachVisibility();
+			    this._syncPuzzleVisibility();
+			    this._syncAnticheatVisibility();
+			    this._syncBoostPageVisibility();
+		    document.body.classList.add('menu-active');
+		  }
 
   async _initEngine() {
     const initToken = ++this.engineInitToken;
@@ -1256,9 +1374,9 @@ class ChessReviewApp {
 
 	    modules.forEach((entry) => {
 	      const unavailable = !!entry.requiresIsolation && !window.crossOriginIsolated;
-	      const label = document.createElement('label');
-	      label.className = `engine-radio-card${unavailable ? ' disabled' : ''}`;
-	      const note = entry.key === recommended ? 'Recommended for this computer' : `${entry.threads || 1} thread${entry.threads === 1 ? '' : 's'}`;
+		      const label = document.createElement('label');
+		      label.className = `engine-radio-card${unavailable ? ' disabled' : ''}`;
+		      const note = entry.downloadLabel || (entry.key === recommended ? 'Recommended for this computer' : `${entry.threads || 1} thread${entry.threads === 1 ? '' : 's'}`);
 	      label.innerHTML = `
 	        <input type="radio" name="${name}" value="${entry.key}" ${entry.key === selected ? 'checked' : ''} ${unavailable ? 'disabled data-unavailable="true"' : ''}>
 	        <span>
@@ -1270,9 +1388,9 @@ class ChessReviewApp {
 	    });
 	  }
 
-  _nextBrowserModuleAfterFailure(failedKey) {
-    if (failedKey) this.failedBrowserModules.add(failedKey);
-    const preferred = ['full-single', 'lite-single', 'full-multi', 'lite-multi', 'asm'];
+	  _nextBrowserModuleAfterFailure(failedKey) {
+	    if (failedKey) this.failedBrowserModules.add(failedKey);
+	    const preferred = ['lite-single', 'full-single'];
     const available = getEngineModules('browser')
       .filter((entry) => !entry.requiresIsolation || window.crossOriginIsolated)
       .map((entry) => entry.key);
@@ -1547,11 +1665,17 @@ class ChessReviewApp {
 	    if (initialized) this._invalidateAnalysisResults();
   }
 
-  async _handleEngineStrengthChange() {
-    this.engineSettings.strength = this.elEngineStrength.value;
-    this._renderIdleEngineInfo();
-    this._invalidateAnalysisResults();
-  }
+	  async _handleEngineStrengthChange() {
+	    this.engineSettings.strength = this.elEngineStrength.value;
+	    this._renderIdleEngineInfo();
+	    this._invalidateAnalysisResults();
+	  }
+
+	  async _handleEngineMaxTimeChange() {
+	    this.engineSettings.maxTimeMs = Math.max(1000, Number(this.elEngineMaxTime?.value) || 12000);
+	    this._renderIdleEngineInfo();
+	    this._invalidateAnalysisResults();
+	  }
 
   _showPgnModal() {
     this.elPgnModal.style.display = 'flex';
@@ -1574,12 +1698,9 @@ class ChessReviewApp {
     this.elSettingsModal.style.display = 'none';
   }
 
-  _recommendedEngineModule() {
-    const cores = navigator.hardwareConcurrency || 2;
-    const isolated = !!window.crossOriginIsolated;
-    if (isolated && cores >= 4) return 'lite-multi';
-    return 'lite-single';
-  }
+	  _recommendedEngineModule() {
+	    return 'lite-single';
+	  }
 
   _engineRecommendationText(moduleKey = this._recommendedEngineModule()) {
     const modules = getEngineModules(this.engineSettings.source);
@@ -1700,11 +1821,20 @@ class ChessReviewApp {
 		    this.anticheatMode.active = false;
 			    this._syncPuzzleVisibility();
 			    this._syncAnticheatVisibility();
+			    this._syncBoostPageVisibility();
 			    this._syncPuzzlePanel();
 			    if (!this.authState.user) {
 			      this._setPuzzleStatus('Log in to solve puzzles. Your rating and completed puzzle list are kept on your account.', 'error');
 			      this._showAccountModal();
 			      this._syncActionButtons();
+			      return;
+			    }
+
+			    if (route === '/boost') {
+			      this._hideSettingsModal();
+			      this._hideAccountModal();
+			      this._enterBoostPage();
+			      document.title = 'Boost | SiDaStuff Chess';
 			      return;
 			    }
 			    const rating = Math.round(Number(this.puzzleMode.rating) || 1500);
@@ -2248,9 +2378,11 @@ class ChessReviewApp {
   _syncSettingsModal() {
 	    if (this.elEngineSource) this.elEngineSource.value = this.engineSettings.source;
 	    if (this.elEngineModule) this._populateEngineModules();
-    if (this.elEngineStrength) this.elEngineStrength.value = this.engineSettings.strength;
-    if (this.elAnalysisLocation) this.elAnalysisLocation.value = this.engineSettings.analysisLocation;
-  }
+	    if (this.elEngineStrength) this.elEngineStrength.value = this.engineSettings.strength;
+	    if (this.elEngineMaxTime) this.elEngineMaxTime.value = String(this.engineSettings.maxTimeMs);
+	    if (this.elAnalysisLocation) this.elAnalysisLocation.value = this.engineSettings.analysisLocation;
+	    if (this.elServerStrongReview) this.elServerStrongReview.checked = !!this.engineSettings.serverStrongReview;
+	  }
 
 	  _playerLabel(color) {
 	    const headers = this.gameHeaders || {};
@@ -2914,12 +3046,32 @@ class ChessReviewApp {
 	      this._setAnticheatStatus('Paste a PGN first.', 'error');
 	      return;
 	    }
-	    if (source !== 'pgn' && !username) {
-	      this._setAnticheatStatus('Enter a username first.', 'error');
-	      return;
-	    }
+		    if (source !== 'pgn' && !username) {
+		      this._setAnticheatStatus('Enter a username first.', 'error');
+		      return;
+		    }
+		    await this._refreshUsageBeforeAction();
+		    if (this._isOutOfUsage('anticheat')) {
+		      const choice = await this._showUsageLimitPopup('anticheat');
+		      if (choice !== 'browser') {
+		        this._setAnticheatStatus('Server anticheat limit reached. Buy Boost or wait for the daily reset.', 'error');
+		        return;
+		      }
+		      this._setAnticheatChecking(true);
+		      try {
+		        const browserResult = await this._runAnticheatInBrowser({ source, username, pgn, limit });
+		        this.anticheatMode.results = browserResult;
+		        this._renderAnticheatResults(browserResult);
+		        this._setAnticheatStatus(`Server limit reached. Checked ${browserResult.gamesAnalyzed || 0} game${browserResult.gamesAnalyzed === 1 ? '' : 's'} in the browser.`, 'success');
+		      } catch (err) {
+		        this._setAnticheatStatus(err.message || 'Browser anticheat failed.', 'error');
+		      } finally {
+		        this._setAnticheatChecking(false);
+		      }
+		      return;
+		    }
 
-	    this._setAnticheatChecking(true);
+		    this._setAnticheatChecking(true);
 	    this._setAnticheatStatus('Server analysis running... Do not close this tab.', 'loading');
 	    if (this.elAnticheatResults) this.elAnticheatResults.innerHTML = '';
 	    if (this.elAnticheatRiskPill) {
@@ -2992,7 +3144,7 @@ class ChessReviewApp {
 
 								const results = this.analyzer.resultsFromEvals(moves, positions, evals, this.analyzer.detectOpening(moves), { headers, skipMateThreat: true });
 								const times = moveTimesFromPgn(res.pgn || '', moves.length, headers);
-								const targetSide = sideForUsername(headers, username);
+									const targetSide = this._sideForUsername(headers, username);
 								const sides = targetSide ? [targetSide] : ['white', 'black'];
 
 								for (const side of sides) {
@@ -3089,7 +3241,8 @@ class ChessReviewApp {
 		    const allMetrics = [];
 		    const aggregatedGames = [];
 		    let skipped = 0;
-		    this.analyzer.setReviewProfile({ depth: 10, multiPv: 1, timeoutMs: 2800 });
+		    const browserProfile = this._getReviewProfile();
+		    this.analyzer.setReviewProfile(browserProfile);
 		    for (let i = 0; i < pgnGames.length; i += 1) {
 		      this._setAnticheatStatus(`Daily server anticheat is used. Browser checking game ${i + 1}/${pgnGames.length}...`, 'loading');
 		      try {
@@ -3100,7 +3253,7 @@ class ChessReviewApp {
 		        const moves = chess.history();
 		        const results = await this.analyzer.analyzeGame(moves, this.engine, null, { headers, initialFen: headers.FEN || headers.Fen || headers.fen, skipMateThreat: true });
 		        const times = moveTimesFromPgn(normalized, moves.length, headers);
-		        const targetSide = sideForUsername(headers, username);
+			        const targetSide = this._sideForUsername(headers, username);
 		        const sides = targetSide ? [targetSide] : ['white', 'black'];
 		        for (const side of sides) {
 		          const metrics = sideMetrics(results, side, times, headers);
@@ -3124,7 +3277,7 @@ class ChessReviewApp {
 		      gamesAnalyzed: pgnGames.length - skipped,
 		      gamesSkipped: skipped,
 		      subjectsAnalyzed: allMetrics.length,
-		      profile: { source: 'browser', depth: 10, multiPv: 1 },
+		      profile: { source: 'browser', depth: browserProfile.depth, multiPv: browserProfile.multiPv },
 		    };
 		  }
 
@@ -4550,11 +4703,36 @@ class ChessReviewApp {
 		    });
 		  }
 		
-		  async _startReview() {
-	const serverReview = this.engineSettings.analysisLocation === 'server';
-    if (this.isAnalyzing || this.gameMoves.length === 0 || (!serverReview && !this.engine?.ready)) return;
-
-    this.isAnalyzing = true;
+			  async _startReview() {
+		const serverReview = this.engineSettings.analysisLocation === 'server';
+	    if (this.isAnalyzing || this.gameMoves.length === 0 || (!serverReview && !this.engine?.ready)) return;
+	    let forceBrowserReview = false;
+	    if (serverReview && this.authState.user) {
+	      await this._refreshUsageBeforeAction();
+	      if (this._isOutOfUsage('serverReviews')) {
+	        const choice = await this._showUsageLimitPopup('serverReviews');
+	        if (choice !== 'browser') {
+	          this._updateLiveEvalPanel({
+	            busy: false,
+	            score: null,
+	            line: 'Server review limit reached.',
+	            meta: 'Buy Boost or wait for the daily reset.',
+	          });
+	          return;
+	        }
+	        forceBrowserReview = true;
+	      }
+	    }
+	    if (forceBrowserReview && !this.engine?.ready) {
+	      await this._showPopup({
+	        icon: 'warning',
+	        title: 'Browser engine is still loading',
+	        text: 'You are out of server reviews. Wait for Stockfish to finish loading, then review in the browser.',
+	      });
+	      return;
+	    }
+	
+	    this.isAnalyzing = true;
     this.liveEvalToken += 1;
     this._syncActionButtons();
     this._setEngineControlsDisabled(true);
@@ -4578,15 +4756,19 @@ class ChessReviewApp {
 	    };
 	
 		    try {
-				      if (serverReview) {
+				      if (serverReview && !forceBrowserReview) {
 				        try {
 				          if (!this.authState.user) {
 				            throw new Error('Log in for server review. Running this review in the browser instead.');
 				          }
 				          this.analysisResults = await this._analyzeGameOnServer();
-					        } catch (serverErr) {
-				          console.warn('Server analysis failed:', serverErr);
-				          if (!this.engine?.ready) throw serverErr;
+						        } catch (serverErr) {
+					          console.warn('Server analysis failed:', serverErr);
+					          if (serverErr?.code === 'quota_exceeded' || /Free plan includes 3 server game reviews/i.test(serverErr.message || '')) {
+					            const choice = await this._showUsageLimitPopup('serverReviews');
+					            if (choice !== 'browser') throw serverErr;
+					          }
+					          if (!this.engine?.ready) throw serverErr;
 				          this.elReviewBtnText.textContent = 'Browser fallback...';
 				          this._updateLiveEvalPanel({
 				            busy: true,
@@ -4660,12 +4842,13 @@ class ChessReviewApp {
 			          moves: this.gameMoves,
 			          headers: this.gameHeaders || {},
 			          initialFen: this.initialFen,
-			          profile: {
-			            key: reviewProfile.key,
-			            depth: 14,
-			            multiPv: 1,
-			            timeoutMs: 4500,
-			          },
+				          profile: {
+				            key: reviewProfile.key,
+				            depth: 14,
+				            multiPv: 1,
+				            timeoutMs: 4500,
+				            serverEngine: this.engineSettings.serverStrongReview ? 'full' : 'lite',
+				          },
 			        }),
 			      });
 			      if (!response.ok || !response.body) {
@@ -4724,7 +4907,9 @@ class ChessReviewApp {
 				      } else if (event === 'complete') {
 				        finalData = data;
 				      } else if (event === 'error') {
-				        throw new Error(data.error || 'Server analysis failed.');
+				        const error = new Error(data.error || 'Server analysis failed.');
+				        error.code = data.code;
+				        throw error;
 				      }
 				    };
 
@@ -4809,11 +4994,12 @@ class ChessReviewApp {
 		    } catch (_err) {
 		      data = null;
 		    }
-			    if (data?.retryable || data?.error) {
-			      const error = new Error(data.error || `Server review chunk ${chunkIndex + 1}/${chunkCount} needs a retry.`);
-				      error.status = response.status;
-				      error.retryable = Boolean(data.retryable);
-				      throw error;
+				    if (data?.retryable || data?.error) {
+				      const error = new Error(data.error || `Server review chunk ${chunkIndex + 1}/${chunkCount} needs a retry.`);
+					      error.status = response.status;
+					      error.retryable = Boolean(data.retryable);
+				      error.code = data.code;
+					      throw error;
 				    }
 				    if (!response.ok) {
 				      const error = new Error(data?.error || text || `Server review chunk ${chunkIndex + 1}/${chunkCount} failed with ${response.status}.`);
@@ -4898,12 +5084,13 @@ class ChessReviewApp {
 		      chunks.push({ start: i, positions: positions.slice(i, i + chunkSize) });
 		    }
 
-						    const serverProfile = {
-						      key: reviewProfile.key,
-						      depth: 14,
-						      multiPv: 1,
-							      timeoutMs: 4500,
-						    };
+					    const serverProfile = {
+					      key: reviewProfile.key,
+					      depth: 14,
+					      multiPv: 1,
+						      timeoutMs: 4500,
+					      serverEngine: this.engineSettings.serverStrongReview ? 'full' : 'lite',
+					    };
 
 					    const evals = new Array(total);
 					    let completedPositions = 0;
